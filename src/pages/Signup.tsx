@@ -1,9 +1,10 @@
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Link } from "react-router-dom";
-import { useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { Eye, EyeOff, Check } from "lucide-react";
+import { useAuth } from "@/hooks/useAuth";
 
 const Signup = () => {
   const [formData, setFormData] = useState({
@@ -14,15 +15,33 @@ const Signup = () => {
   });
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const { signUp, user } = useAuth();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (user) {
+      navigate("/dashboard");
+    }
+  }, [user, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
     
-    // Simulate signup
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    toast.success("Account created! Check your email to verify.");
-    setIsLoading(false);
+    const { error } = await signUp(
+      formData.email,
+      formData.password,
+      formData.name,
+      formData.company
+    );
+    
+    if (error) {
+      toast.error(error.message);
+      setIsLoading(false);
+    } else {
+      toast.success("Account created! Redirecting to dashboard...");
+      navigate("/dashboard");
+    }
   };
 
   const benefits = [
