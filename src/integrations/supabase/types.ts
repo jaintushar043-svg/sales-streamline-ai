@@ -14,6 +14,60 @@ export type Database = {
   }
   public: {
     Tables: {
+      leads: {
+        Row: {
+          company_name: string | null
+          company_revenue: string | null
+          company_size: string | null
+          company_website: string | null
+          created_at: string
+          email: string | null
+          full_name: string
+          id: string
+          industry: string | null
+          job_title: string | null
+          linkedin_url: string | null
+          phone: string | null
+          status: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          company_name?: string | null
+          company_revenue?: string | null
+          company_size?: string | null
+          company_website?: string | null
+          created_at?: string
+          email?: string | null
+          full_name: string
+          id?: string
+          industry?: string | null
+          job_title?: string | null
+          linkedin_url?: string | null
+          phone?: string | null
+          status?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          company_name?: string | null
+          company_revenue?: string | null
+          company_size?: string | null
+          company_website?: string | null
+          created_at?: string
+          email?: string | null
+          full_name?: string
+          id?: string
+          industry?: string | null
+          job_title?: string | null
+          linkedin_url?: string | null
+          phone?: string | null
+          status?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           avatar_url: string | null
