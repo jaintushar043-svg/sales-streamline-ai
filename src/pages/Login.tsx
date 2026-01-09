@@ -1,24 +1,38 @@
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Link } from "react-router-dom";
-import { useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
+import { useState, useEffect } from "react";
 import { toast } from "sonner";
 import { Eye, EyeOff } from "lucide-react";
+import { useAuth } from "@/hooks/useAuth";
 
 const Login = () => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const { signIn, user } = useAuth();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (user) {
+      navigate("/dashboard");
+    }
+  }, [user, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
     
-    // Simulate login
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    toast.success("Login successful! Redirecting to dashboard...");
-    setIsLoading(false);
+    const { error } = await signIn(email, password);
+    
+    if (error) {
+      toast.error(error.message);
+      setIsLoading(false);
+    } else {
+      toast.success("Login successful!");
+      navigate("/dashboard");
+    }
   };
 
   return (
