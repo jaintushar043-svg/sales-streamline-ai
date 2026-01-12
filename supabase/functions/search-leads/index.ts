@@ -10,6 +10,7 @@ interface SearchCriteria {
   jobTitle?: string;
   location?: string;
   country?: string;
+  revenueTier?: string;
   limit?: number;
 }
 
@@ -48,26 +49,31 @@ serve(async (req) => {
     // Use Lovable AI to generate realistic lead data based on criteria
     const lovableApiKey = Deno.env.get("LOVABLE_API_KEY");
     
+    const locationString = criteria.location && criteria.location !== "all" 
+      ? `${criteria.location}, ${criteria.country}` 
+      : criteria.country || "Global";
+    
     const prompt = `Generate ${searchLimit} realistic B2B lead profiles matching these criteria:
-- Industry: ${criteria.industry || "Any"}
-- Company Size: ${criteria.companySize || "Any"}
-- Job Title: ${criteria.jobTitle || "Decision maker"}
-- Location: ${criteria.location || criteria.country || "USA"}
+- Industry: ${criteria.industry || "Any B2B industry"}
+- Company Size: ${criteria.companySize || "Any size"}
+- Job Title: ${criteria.jobTitle || "Decision maker (CEO, CTO, VP, Director)"}
+- Location: ${locationString}
+- Revenue Tier: ${criteria.revenueTier || "Any revenue"}
 
-For each lead, provide:
-- full_name: Realistic full name
+For each lead, provide realistic data for the specified location. If India cities like Bengaluru, Mumbai, Delhi, Hyderabad, Pune, Chennai are specified, generate Indian names, Indian phone numbers (+91), and .in domain emails. If UAE/Dubai is specified, use Middle Eastern names and +971 numbers. For each lead include:
+- full_name: Realistic full name appropriate for the location
 - job_title: Job title matching criteria
-- company_name: Realistic company name
+- company_name: Realistic company name for that region
 - company_size: Employee range (e.g., "51-200")
 - industry: Industry category
-- location: City, State format
-- email: Work email (use common B2B email patterns)
-- phone: Phone number with area code
+- location: City name
+- email: Work email (use company domain, e.g., name@company.com or name@company.in)
+- phone: Phone number with correct country code for the location
 - linkedin_url: LinkedIn profile URL format
-- company_website: Company website URL
-- company_revenue: Revenue range (e.g., "$10M-$50M")
+- company_website: Company website URL appropriate for region
+- company_revenue: Revenue range matching criteria
 
-Return ONLY a JSON array of leads. No explanations.`;
+Return ONLY a JSON array of leads with no markdown formatting, no explanation, just the array.`;
 
     const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",

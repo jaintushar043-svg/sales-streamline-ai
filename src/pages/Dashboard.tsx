@@ -2,12 +2,14 @@ import { useAuth } from "@/hooks/useAuth";
 import { useLeads } from "@/hooks/useLeads";
 import { Button } from "@/components/ui/button";
 import { useNavigate } from "react-router-dom";
-import { LogOut, User, Building2, Mail, Download, Users, TrendingUp, FileSpreadsheet } from "lucide-react";
+import { LogOut, User, Building2, Download, Users, TrendingUp, FileSpreadsheet, Phone } from "lucide-react";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import LeadFilters from "@/components/dashboard/LeadFilters";
 import LeadsTable from "@/components/dashboard/LeadsTable";
 import CSVImport from "@/components/dashboard/CSVImport";
+import LeadSearch from "@/components/dashboard/LeadSearch";
+import CRMSync from "@/components/dashboard/CRMSync";
 
 interface Profile {
   full_name: string | null;
@@ -36,6 +38,7 @@ const Dashboard = () => {
     importLeads,
     deleteLead,
     exportToCSV,
+    refetch,
   } = useLeads({ userId: user?.id });
 
   useEffect(() => {
@@ -155,7 +158,9 @@ const Dashboard = () => {
                   {leads.length} of {allLeads.length} leads shown
                 </p>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
+                <LeadSearch onLeadsFound={refetch} />
+                <CRMSync leads={leads} userId={user?.id} />
                 <Button variant="outline" onClick={exportToCSV} disabled={leads.length === 0}>
                   <Download className="h-4 w-4 mr-2" />
                   Export CSV
