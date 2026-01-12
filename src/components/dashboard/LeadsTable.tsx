@@ -8,8 +8,9 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { ExternalLink, Trash2, Building2, Phone, Mail } from "lucide-react";
+import { ExternalLink, Trash2, Building2, Phone, Mail, Sparkles } from "lucide-react";
 import { Tables } from "@/integrations/supabase/types";
+import AICallPanel from "./AICallPanel";
 
 type Lead = Tables<"leads">;
 
@@ -20,11 +21,11 @@ interface LeadsTableProps {
 }
 
 const statusColors: Record<string, string> = {
-  new: "bg-blue-100 text-blue-800",
-  contacted: "bg-yellow-100 text-yellow-800",
-  qualified: "bg-green-100 text-green-800",
-  converted: "bg-purple-100 text-purple-800",
-  lost: "bg-red-100 text-red-800",
+  new: "bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300",
+  contacted: "bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-300",
+  qualified: "bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300",
+  converted: "bg-purple-100 text-purple-800 dark:bg-purple-900/30 dark:text-purple-300",
+  lost: "bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300",
 };
 
 const LeadsTable = ({ leads, onDeleteLead, isLoading }: LeadsTableProps) => {
@@ -121,14 +122,17 @@ const LeadsTable = ({ leads, onDeleteLead, isLoading }: LeadsTableProps) => {
                 </Badge>
               </TableCell>
               <TableCell className="text-right">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => onDeleteLead(lead.id)}
-                  className="text-destructive hover:text-destructive hover:bg-destructive/10"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
+                <div className="flex items-center justify-end gap-1">
+                  <AICallPanel lead={lead} />
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => onDeleteLead(lead.id)}
+                    className="text-destructive hover:text-destructive hover:bg-destructive/10"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
               </TableCell>
             </TableRow>
           ))}

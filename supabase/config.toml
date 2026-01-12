@@ -1,1 +1,22 @@
 project_id = "zxhfipmckrdnirwqgsgn"
+
+[functions.search-leads]
+verify_jwt = false
+
+[functions.enrich-lead]
+verify_jwt = false
+
+[functions.sync-crm]
+verify_jwt = false
+
+[functions.initiate-call]
+verify_jwt = false
+
+[functions.complete-call]
+verify_jwt = false
+
+[functions.get-usage-stats]
+verify_jwt = false
+
+[functions.admin-stats]
+verify_jwt = false
