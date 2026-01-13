@@ -1,11 +1,12 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
-import { Phone, Loader2, Bot, User, PhoneCall, PhoneOff, MessageSquare, Clock, CheckCircle2 } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import { Phone, Loader2, Bot, User, PhoneCall, PhoneOff, MessageSquare, Clock, CheckCircle2, FlaskConical } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { Tables } from "@/integrations/supabase/types";
@@ -69,8 +70,53 @@ const AICallPanel = ({ lead }: AICallPanelProps) => {
     script: string;
   } | null>(null);
   const [notes, setNotes] = useState("");
+  const [demoMode, setDemoMode] = useState(true); // Default to demo mode for safety
+  const [callDuration, setCallDuration] = useState(0);
+  const [demoTranscript, setDemoTranscript] = useState<string[]>([]);
 
   const selectedScript = CALL_SCRIPTS[scriptType];
+
+  // Timer for call duration
+  useEffect(() => {
+    let interval: NodeJS.Timeout;
+    if (callState === "in_progress") {
+      interval = setInterval(() => {
+        setCallDuration((prev) => prev + 1);
+      }, 1000);
+    }
+    return () => clearInterval(interval);
+  }, [callState]);
+
+  // Demo mode transcript simulation
+  useEffect(() => {
+    if (!demoMode || callState !== "in_progress") return;
+    
+    const demoMessages = [
+      { delay: 2000, speaker: "AI", text: `Hi, this is Alex from TechMarqX. Am I speaking with ${lead.full_name}?` },
+      { delay: 5000, speaker: "Lead", text: "Yes, this is them. How can I help you?" },
+      { delay: 8000, speaker: "AI", text: `Great to connect! I noticed ${lead.company_name} is in the ${lead.industry || "tech"} space. We help companies like yours streamline their sales outreach.` },
+      { delay: 12000, speaker: "Lead", text: "Interesting, tell me more." },
+      { delay: 15000, speaker: "AI", text: "Our AI-powered platform can help your team book 3x more demos with qualified leads. Would you be open to a quick 15-minute demo?" },
+      { delay: 19000, speaker: "Lead", text: "Sure, that sounds useful. What times work?" },
+      { delay: 22000, speaker: "AI", text: "Excellent! I have availability tomorrow at 2 PM or Thursday at 10 AM. Which works better for you?" },
+    ];
+
+    const timeouts: NodeJS.Timeout[] = [];
+    demoMessages.forEach(({ delay, speaker, text }) => {
+      const timeout = setTimeout(() => {
+        setDemoTranscript((prev) => [...prev, `[${speaker}]: ${text}`]);
+      }, delay);
+      timeouts.push(timeout);
+    });
+
+    return () => timeouts.forEach(clearTimeout);
+  }, [demoMode, callState, lead]);
+
+  const formatDuration = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
+  };
 
   const handleInitiateCall = async () => {
     if (!lead.phone) {
@@ -80,34 +126,51 @@ const AICallPanel = ({ lead }: AICallPanelProps) => {
 
     setIsInitiating(true);
     setCallState("connecting");
+    setCallDuration(0);
+    setDemoTranscript([]);
 
     try {
-      // Use real Twilio integration
-      const response = await supabase.functions.invoke("twilio-call", {
-        body: {
-          leadId: lead.id,
-          toPhoneNumber: lead.phone,
-          callType,
-          scriptType,
-        },
-      });
-
-      if (response.error) {
-        throw new Error(response.error.message);
-      }
-
-      const data = response.data;
-      if (data.success) {
+      if (demoMode) {
+        // Simulate connection delay
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        
         setCallData({
-          id: data.callId,
+          id: `demo-${Date.now()}`,
           script: CALL_SCRIPTS[scriptType]?.steps.join("\n• ") || "",
         });
         setCallState("in_progress");
-        toast.success("Call initiated via Twilio", {
-          description: `Calling ${lead.phone}...`,
+        toast.success("Demo call started", {
+          description: `Simulating call to ${lead.phone}...`,
+          icon: <FlaskConical className="w-4 h-4" />,
         });
       } else {
-        throw new Error(data.error);
+        // Use real Twilio integration
+        const response = await supabase.functions.invoke("twilio-call", {
+          body: {
+            leadId: lead.id,
+            toPhoneNumber: lead.phone,
+            callType,
+            scriptType,
+          },
+        });
+
+        if (response.error) {
+          throw new Error(response.error.message);
+        }
+
+        const data = response.data;
+        if (data.success) {
+          setCallData({
+            id: data.callId,
+            script: CALL_SCRIPTS[scriptType]?.steps.join("\n• ") || "",
+          });
+          setCallState("in_progress");
+          toast.success("Call initiated via Twilio", {
+            description: `Calling ${lead.phone}...`,
+          });
+        } else {
+          throw new Error(data.error);
+        }
       }
     } catch (error) {
       console.error("Call initiation error:", error);
@@ -116,6 +179,10 @@ const AICallPanel = ({ lead }: AICallPanelProps) => {
         toast.error("Call limit exceeded. Please upgrade your plan.");
       } else if (error instanceof Error && error.message.includes("Twilio credentials")) {
         toast.error("Twilio not configured. Please add your Twilio credentials.");
+      } else if (error instanceof Error && error.message.includes("unverified")) {
+        toast.error("Twilio trial restriction", {
+          description: "This number is not verified. Use demo mode or verify in Twilio console.",
+        });
       } else {
         toast.error(error instanceof Error ? error.message : "Failed to initiate call");
       }
@@ -152,6 +219,8 @@ const AICallPanel = ({ lead }: AICallPanelProps) => {
     setCallState("idle");
     setCallData(null);
     setNotes("");
+    setCallDuration(0);
+    setDemoTranscript([]);
   };
 
   return (
@@ -196,6 +265,26 @@ const AICallPanel = ({ lead }: AICallPanelProps) => {
 
         {callState === "idle" && (
           <>
+            {/* Demo Mode Toggle */}
+            <div className="flex items-center justify-between p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg mb-4">
+              <div className="flex items-center gap-2">
+                <FlaskConical className="w-4 h-4 text-amber-600" />
+                <div>
+                  <Label htmlFor="demo-mode" className="text-sm font-medium text-amber-700 dark:text-amber-400">
+                    Demo Mode
+                  </Label>
+                  <p className="text-xs text-amber-600 dark:text-amber-500">
+                    Simulate calls without using Twilio
+                  </p>
+                </div>
+              </div>
+              <Switch
+                id="demo-mode"
+                checked={demoMode}
+                onCheckedChange={setDemoMode}
+              />
+            </div>
+
             {/* Call Type Selection */}
             <div className="space-y-4">
               <div className="space-y-2">
@@ -297,13 +386,36 @@ const AICallPanel = ({ lead }: AICallPanelProps) => {
                 </div>
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <Clock className="w-4 h-4" />
-                  <span>00:00</span>
+                  <span>{formatDuration(callDuration)}</span>
+                  {demoMode && (
+                    <Badge variant="outline" className="text-amber-600 border-amber-300">
+                      <FlaskConical className="w-3 h-3 mr-1" />
+                      Demo
+                    </Badge>
+                  )}
                 </div>
               </div>
             </div>
 
+            {/* Live Transcript for Demo Mode */}
+            {demoMode && demoTranscript.length > 0 && (
+              <div className="space-y-2">
+                <Label className="flex items-center gap-2">
+                  <MessageSquare className="w-4 h-4" />
+                  Live Transcript
+                </Label>
+                <div className="bg-muted/30 rounded-lg p-4 max-h-[200px] overflow-y-auto space-y-2">
+                  {demoTranscript.map((line, i) => (
+                    <p key={i} className={`text-xs ${line.startsWith("[AI]") ? "text-primary" : "text-muted-foreground"}`}>
+                      {line}
+                    </p>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* AI Script Display */}
-            {callType === "ai_agent" && callData?.script && (
+            {!demoMode && callType === "ai_agent" && callData?.script && (
               <div className="space-y-2">
                 <Label className="flex items-center gap-2">
                   <MessageSquare className="w-4 h-4" />
