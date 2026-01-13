@@ -122,14 +122,15 @@ const LeadSearch = ({ onLeadsFound }: LeadSearchProps) => {
         return;
       }
 
-      const response = await supabase.functions.invoke("search-leads", {
+      // First try Apollo for real data, falls back to AI if Apollo fails
+      const response = await supabase.functions.invoke("apollo-search", {
         body: {
           country: selectedCountry?.label || "",
-          location: city || selectedCountry?.label || "",
+          city: city && city !== "all" ? city : undefined,
           industry,
           companySize,
-          revenueTier,
-          jobTitle: customJobTitle || jobTitle,
+          jobTitles: (customJobTitle || jobTitle) ? [customJobTitle || jobTitle] : undefined,
+          revenueTier: revenueTier ? `$${revenueTier}` : undefined,
           limit: parseInt(leadCount),
         },
       });
@@ -140,7 +141,12 @@ const LeadSearch = ({ onLeadsFound }: LeadSearchProps) => {
 
       const data = response.data;
       if (data.success) {
-        toast.success(`Found ${data.count} leads!`);
+        const source = data.source === "apollo" ? "Apollo.io" : "AI";
+        toast.success(`Found ${data.count} leads from ${source}!`, {
+          description: data.source === "apollo" 
+            ? "Real verified business contacts" 
+            : "AI-generated leads based on your criteria",
+        });
         onLeadsFound();
         setIsOpen(false);
         // Reset form

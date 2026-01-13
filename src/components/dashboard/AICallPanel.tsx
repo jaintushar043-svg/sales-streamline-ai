@@ -44,12 +44,24 @@ const CALL_SCRIPTS = {
       "Confirm next action",
     ],
   },
+  demo_booking: {
+    name: "Demo Booking",
+    description: "Direct call to schedule a product demo",
+    steps: [
+      "Confirm interest in seeing the platform",
+      "Highlight 15-minute demo format",
+      "Ask about specific challenges",
+      "Identify additional stakeholders",
+      "Propose specific time slots",
+      "Confirm booking details",
+    ],
+  },
 };
 
 const AICallPanel = ({ lead }: AICallPanelProps) => {
   const [isOpen, setIsOpen] = useState(false);
   const [callType, setCallType] = useState<"ai_agent" | "manual">("ai_agent");
-  const [scriptType, setScriptType] = useState<"cold_outreach" | "follow_up">("cold_outreach");
+  const [scriptType, setScriptType] = useState<"cold_outreach" | "follow_up" | "demo_booking">("cold_outreach");
   const [isInitiating, setIsInitiating] = useState(false);
   const [callState, setCallState] = useState<"idle" | "connecting" | "in_progress" | "ended">("idle");
   const [callData, setCallData] = useState<{
@@ -70,12 +82,13 @@ const AICallPanel = ({ lead }: AICallPanelProps) => {
     setCallState("connecting");
 
     try {
-      const response = await supabase.functions.invoke("initiate-call", {
+      // Use real Twilio integration
+      const response = await supabase.functions.invoke("twilio-call", {
         body: {
           leadId: lead.id,
+          toPhoneNumber: lead.phone,
           callType,
           scriptType,
-          phoneNumber: lead.phone,
         },
       });
 
@@ -86,11 +99,13 @@ const AICallPanel = ({ lead }: AICallPanelProps) => {
       const data = response.data;
       if (data.success) {
         setCallData({
-          id: data.call.id,
-          script: data.call.script || "",
+          id: data.callId,
+          script: CALL_SCRIPTS[scriptType]?.steps.join("\n• ") || "",
         });
         setCallState("in_progress");
-        toast.success(data.message);
+        toast.success("Call initiated via Twilio", {
+          description: `Calling ${lead.phone}...`,
+        });
       } else {
         throw new Error(data.error);
       }
@@ -99,6 +114,8 @@ const AICallPanel = ({ lead }: AICallPanelProps) => {
       setCallState("idle");
       if (error instanceof Error && error.message.includes("429")) {
         toast.error("Call limit exceeded. Please upgrade your plan.");
+      } else if (error instanceof Error && error.message.includes("Twilio credentials")) {
+        toast.error("Twilio not configured. Please add your Twilio credentials.");
       } else {
         toast.error(error instanceof Error ? error.message : "Failed to initiate call");
       }
@@ -212,6 +229,7 @@ const AICallPanel = ({ lead }: AICallPanelProps) => {
                     <SelectContent>
                       <SelectItem value="cold_outreach">Cold Outreach</SelectItem>
                       <SelectItem value="follow_up">Follow-Up Call</SelectItem>
+                      <SelectItem value="demo_booking">Demo Booking</SelectItem>
                     </SelectContent>
                   </Select>
 

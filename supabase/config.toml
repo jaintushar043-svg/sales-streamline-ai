@@ -20,3 +20,21 @@ verify_jwt = false
 
 [functions.admin-stats]
 verify_jwt = false
+
+[functions.twilio-call]
+verify_jwt = false
+
+[functions.twilio-status-callback]
+verify_jwt = false
+
+[functions.twilio-recording-callback]
+verify_jwt = false
+
+[functions.twilio-ai-handler]
+verify_jwt = false
+
+[functions.twilio-ai-response]
+verify_jwt = false
+
+[functions.apollo-search]
+verify_jwt = false
