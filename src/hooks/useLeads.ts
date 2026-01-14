@@ -108,9 +108,11 @@ export const useLeads = ({ userId }: UseLeadsOptions) => {
       "Email",
       "Phone",
       "LinkedIn URL",
+      "Company LinkedIn URL",
       "Company Website",
       "Company Revenue",
       "Status",
+      "Source",
       "Created At",
     ];
 
@@ -123,9 +125,11 @@ export const useLeads = ({ userId }: UseLeadsOptions) => {
       lead.email || "",
       lead.phone || "",
       lead.linkedin_url || "",
+      (lead as Record<string, unknown>).company_linkedin_url || "",
       lead.company_website || "",
       lead.company_revenue || "",
       lead.status || "new",
+      lead.source || "manual",
       new Date(lead.created_at).toLocaleDateString(),
     ]);
 
