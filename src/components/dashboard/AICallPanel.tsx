@@ -195,12 +195,22 @@ const AICallPanel = ({ lead }: AICallPanelProps) => {
     if (!callData?.id) return;
 
     try {
+      // Skip backend call in demo mode since no real call record exists
+      if (demoMode) {
+        setCallState("ended");
+        toast.success("Demo call completed", {
+          description: "In production, this would log the call to your CRM.",
+          icon: <FlaskConical className="w-4 h-4" />,
+        });
+        return;
+      }
+
       const response = await supabase.functions.invoke("complete-call", {
         body: {
           callId: callData.id,
           outcome: "completed",
           notes,
-          durationSeconds: 180, // Simulated duration
+          durationSeconds: callDuration,
         },
       });
 
