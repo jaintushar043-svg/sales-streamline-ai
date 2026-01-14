@@ -141,12 +141,22 @@ const LeadSearch = ({ onLeadsFound }: LeadSearchProps) => {
 
       const data = response.data;
       if (data.success) {
-        const source = data.source === "apollo" ? "Apollo.io" : "AI";
-        toast.success(`Found ${data.count} leads from ${source}!`, {
-          description: data.source === "apollo" 
-            ? "Real verified business contacts" 
-            : "AI-generated leads based on your criteria",
-        });
+        const source = data.source === "apollo" ? "Apollo.io (Verified)" : "Demo Mode";
+        const isDemo = data.source !== "apollo";
+        
+        if (isDemo && data.warning) {
+          toast.warning("Demo Data Generated", {
+            description: data.warning,
+            duration: 8000,
+          });
+        } else {
+          toast.success(`Found ${data.count} leads from ${source}!`, {
+            description: data.source === "apollo" 
+              ? "Real verified business contacts from Apollo.io" 
+              : "Demo leads for testing - not real contacts",
+          });
+        }
+        
         onLeadsFound();
         setIsOpen(false);
         // Reset form

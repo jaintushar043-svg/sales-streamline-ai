@@ -257,6 +257,7 @@ export type Database = {
       }
       leads: {
         Row: {
+          company_linkedin_url: string | null
           company_name: string | null
           company_revenue: string | null
           company_size: string | null
@@ -275,6 +276,7 @@ export type Database = {
           user_id: string
         }
         Insert: {
+          company_linkedin_url?: string | null
           company_name?: string | null
           company_revenue?: string | null
           company_size?: string | null
@@ -293,6 +295,7 @@ export type Database = {
           user_id: string
         }
         Update: {
+          company_linkedin_url?: string | null
           company_name?: string | null
           company_revenue?: string | null
           company_size?: string | null

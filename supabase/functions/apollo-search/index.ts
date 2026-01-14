@@ -56,7 +56,6 @@ serve(async (req) => {
 
     // Build Apollo API request
     const apolloParams: Record<string, unknown> = {
-      api_key: apolloApiKey,
       per_page: Math.min(limit, 100),
       page: 1,
     };
@@ -121,12 +120,13 @@ serve(async (req) => {
 
     console.log("Apollo search params:", JSON.stringify(apolloParams, null, 2));
 
-    // Make Apollo API request
+    // Make Apollo API request with proper authentication
     const apolloResponse = await fetch("https://api.apollo.io/v1/mixed_people/search", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         "Cache-Control": "no-cache",
+        "x-api-key": apolloApiKey,
       },
       body: JSON.stringify(apolloParams),
     });
@@ -156,7 +156,7 @@ serve(async (req) => {
       last_name?: string;
       name?: string;
       email?: string;
-      phone_numbers?: Array<{ sanitized_number?: string }>;
+      phone_numbers?: Array<{ sanitized_number?: string; raw_number?: string }>;
       title?: string;
       linkedin_url?: string;
       organization?: {
@@ -176,11 +176,14 @@ serve(async (req) => {
         ? `${person.first_name} ${person.last_name}` 
         : person.name || "Unknown",
       email: person.email || null,
-      phone: person.phone_numbers?.[0]?.sanitized_number || null,
+      phone: person.phone_numbers?.[0]?.sanitized_number || person.phone_numbers?.[0]?.raw_number || null,
       job_title: person.title || null,
       linkedin_url: person.linkedin_url || null,
       company_name: person.organization?.name || null,
-      company_website: person.organization?.website_url || null,
+      company_website: person.organization?.website_url ? 
+        (person.organization.website_url.startsWith("http") ? person.organization.website_url : `https://${person.organization.website_url}`) 
+        : null,
+      company_linkedin_url: person.organization?.linkedin_url || null,
       company_size: person.organization?.estimated_num_employees 
         ? categorizeCompanySize(person.organization.estimated_num_employees)
         : null,
@@ -253,31 +256,33 @@ async function generateFallbackLeads(
   userId: string,
   params: ApolloSearchRequest
 ): Promise<Response> {
-  console.log("Using AI fallback for lead generation");
+  console.log("Using AI fallback for lead generation - DATA WILL BE SIMULATED");
   
   const lovableApiKey = Deno.env.get("LOVABLE_API_KEY");
   const supabase = createServiceClient();
 
-  const prompt = `Generate ${params.limit || 10} realistic B2B sales leads with the following criteria:
+  const prompt = `Generate ${params.limit || 10} DEMO/SAMPLE B2B sales leads with the following criteria:
 - Location: ${params.city ? `${params.city}, ` : ""}${params.country || "United States"}
 - Industry: ${params.industry || "Technology"}
 - Company Size: ${params.companySize || "50-200 employees"}
 - Target Job Titles: ${params.jobTitles?.join(", ") || "Decision makers"}
 - Revenue Tier: ${params.revenueTier || "$10M-50M"}
 
+IMPORTANT: These are DEMO leads for testing purposes only. Generate realistic-looking but clearly fictional data.
+
 Return a JSON array with these exact fields for each lead:
 - full_name: Realistic full name appropriate for the region
-- email: Professional email (firstname.lastname@company.com format)
-- phone: Valid phone number format for the country
+- email: Professional email (use demo domains like example.com, test-company.com, demo-corp.com)
+- phone: Valid phone number format for the country (use realistic format)
 - job_title: One of the target titles
-- company_name: Realistic company name
-- company_website: Website URL
+- company_name: Fictional but realistic company name (include "Demo", "Sample", or "Test" in some names)
+- company_website: Website URL (use example.com, demo domains)
+- company_linkedin_url: LinkedIn company page URL format (linkedin.com/company/...)
 - linkedin_url: LinkedIn profile URL format
 - company_size: Employee range
 - industry: The industry
 - company_revenue: Revenue tier
 
-IMPORTANT: Generate realistic, diverse data. Include proper international phone formats.
 Return ONLY the JSON array, no markdown or explanation.`;
 
   const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
@@ -289,7 +294,7 @@ Return ONLY the JSON array, no markdown or explanation.`;
     body: JSON.stringify({
       model: "google/gemini-2.5-flash",
       messages: [
-        { role: "system", content: "You are a B2B lead data generator. Generate realistic, professional lead data." },
+        { role: "system", content: "You are a DEMO data generator for testing. Generate realistic-looking but clearly fictional B2B lead data for testing purposes." },
         { role: "user", content: prompt },
       ],
       temperature: 0.8,
@@ -317,7 +322,7 @@ Return ONLY the JSON array, no markdown or explanation.`;
   const leads = parsedLeads.map((lead: Record<string, unknown>) => ({
     ...lead,
     user_id: userId,
-    source: "ai_generated",
+    source: "demo_simulated", // Clearly mark as simulated
     status: "new",
   }));
 
@@ -339,7 +344,8 @@ Return ONLY the JSON array, no markdown or explanation.`;
       success: true,
       leads: insertedLeads,
       count: insertedLeads?.length || 0,
-      source: "ai_generated",
+      source: "demo_simulated",
+      warning: "⚠️ These are DEMO leads generated by AI for testing. For real verified data, ensure your Apollo.io API key is configured correctly.",
     }),
     { headers: { ...corsHeaders, "Content-Type": "application/json" } }
   );
