@@ -27,11 +27,63 @@ const CRM_PRESETS = [
   { name: "Custom Webhook", webhookPlaceholder: "https://your-webhook-url.com/leads" },
 ];
 
+/**
+ * Validates webhook URL to prevent SSRF attacks
+ * Only allows HTTPS and blocks internal/private networks
+ */
+const validateWebhookUrl = (url: string): { valid: boolean; error?: string } => {
+  try {
+    const parsed = new URL(url);
+    
+    // Only allow HTTPS
+    if (parsed.protocol !== 'https:') {
+      return { valid: false, error: 'Only HTTPS webhooks are allowed for security' };
+    }
+    
+    const hostname = parsed.hostname.toLowerCase();
+    
+    // Block localhost and common internal hostnames
+    const blockedHostnames = [
+      'localhost', '127.0.0.1', '0.0.0.0', '::1', '[::1]',
+      '169.254.169.254', 'metadata.google.internal', 'metadata.goog',
+      'kubernetes.default', 'kubernetes.default.svc',
+    ];
+    
+    if (blockedHostnames.includes(hostname)) {
+      return { valid: false, error: 'This hostname is not allowed' };
+    }
+    
+    // Block private IP ranges
+    const privateIpPatterns = [
+      /^10\./, /^172\.(1[6-9]|2[0-9]|3[01])\./, /^192\.168\./, /^127\./, /^169\.254\./, /^0\./,
+    ];
+    
+    for (const pattern of privateIpPatterns) {
+      if (pattern.test(hostname)) {
+        return { valid: false, error: 'Private IP addresses are not allowed' };
+      }
+    }
+    
+    // Block internal TLDs
+    const blockedTlds = ['.local', '.internal', '.localhost', '.corp'];
+    for (const tld of blockedTlds) {
+      if (hostname.endsWith(tld)) {
+        return { valid: false, error: 'Internal domains are not allowed' };
+      }
+    }
+    
+    return { valid: true };
+  } catch {
+    return { valid: false, error: 'Invalid URL format' };
+  }
+};
+
 const CRMSync = ({ leads, userId }: CRMSyncProps) => {
   const [isOpen, setIsOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [webhookUrlError, setWebhookUrlError] = useState<string>("");
   
   // Connection settings
   const [connections, setConnections] = useState<CRMConnection[]>([]);
@@ -90,6 +142,15 @@ const CRMSync = ({ leads, userId }: CRMSyncProps) => {
       return;
     }
 
+    // Validate webhook URL before saving
+    const urlValidation = validateWebhookUrl(webhookUrl);
+    if (!urlValidation.valid) {
+      setWebhookUrlError(urlValidation.error || "Invalid URL");
+      toast.error(urlValidation.error || "Invalid webhook URL");
+      return;
+    }
+    setWebhookUrlError("");
+
     if (!userId) {
       toast.error("Please log in to save connection");
       return;
@@ -121,6 +182,7 @@ const CRMSync = ({ leads, userId }: CRMSyncProps) => {
       setWebhookUrl("");
       setApiKey("");
       setConnectionName("");
+      setWebhookUrlError("");
     } catch (error) {
       console.error("Error saving connection:", error);
       toast.error("Failed to save CRM connection");
@@ -339,11 +401,23 @@ const CRMSync = ({ leads, userId }: CRMSyncProps) => {
               <Input
                 placeholder={selectedPreset?.webhookPlaceholder || "https://your-webhook-url.com/leads"}
                 value={webhookUrl}
-                onChange={(e) => setWebhookUrl(e.target.value)}
+                onChange={(e) => {
+                  setWebhookUrl(e.target.value);
+                  if (webhookUrlError) {
+                    const validation = validateWebhookUrl(e.target.value);
+                    if (validation.valid) setWebhookUrlError("");
+                    else setWebhookUrlError(validation.error || "Invalid URL");
+                  }
+                }}
+                className={webhookUrlError ? "border-red-500" : ""}
               />
-              <p className="text-xs text-muted-foreground">
-                Enter your CRM's API endpoint or webhook URL for receiving leads
-              </p>
+              {webhookUrlError ? (
+                <p className="text-xs text-red-500">{webhookUrlError}</p>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  Enter your CRM's HTTPS API endpoint or webhook URL for receiving leads
+                </p>
+              )}
             </div>
 
             <div className="space-y-2">
