@@ -1,8 +1,11 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { corsHeaders } from "../_shared/cors.ts";
+import { getCorsHeaders } from "../_shared/cors.ts";
 import { createServiceClient } from "../_shared/supabase.ts";
+import { validateTwilioSignature, parseFormDataForValidation } from "../_shared/twilio-validation.ts";
 
 serve(async (req) => {
+  const corsHeaders = getCorsHeaders(req.headers.get("origin"));
+
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
@@ -15,8 +18,14 @@ serve(async (req) => {
       return new Response("Missing callId", { status: 400 });
     }
 
-    // Parse form data from Twilio
-    const formData = await req.formData();
+    // Parse form data and validate Twilio signature
+    const { formData, params } = await parseFormDataForValidation(req);
+    
+    if (!validateTwilioSignature(req, params)) {
+      console.error("Invalid Twilio signature for recording callback");
+      return new Response("Unauthorized", { status: 403 });
+    }
+
     const recordingUrl = formData.get("RecordingUrl") as string;
     const recordingSid = formData.get("RecordingSid") as string;
     const recordingDuration = formData.get("RecordingDuration") as string;
