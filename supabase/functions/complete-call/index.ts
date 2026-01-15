@@ -1,6 +1,6 @@
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { corsHeaders } from "../_shared/cors.ts";
+import { getCorsHeaders } from "../_shared/cors.ts";
 import { createServiceClient, getUserFromAuth } from "../_shared/supabase.ts";
 import { logUsage } from "../_shared/usage.ts";
 import { sanitizeTranscript } from "../_shared/security-utils.ts";
@@ -15,6 +15,8 @@ interface CompleteCallRequest {
 }
 
 serve(async (req) => {
+  const corsHeaders = getCorsHeaders(req.headers.get("origin"));
+
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
@@ -144,6 +146,7 @@ serve(async (req) => {
     );
   } catch (error: unknown) {
     console.error("Complete call error:", error);
+    const corsHeaders = getCorsHeaders(req.headers.get("origin"));
     return new Response(
       JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }

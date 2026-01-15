@@ -1,6 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
-import { corsHeaders } from "../_shared/cors.ts";
+import { getCorsHeaders } from "../_shared/cors.ts";
 import { createServiceClient, getUserFromAuth } from "../_shared/supabase.ts";
 import { checkUsageLimit, logUsage } from "../_shared/usage.ts";
 
@@ -15,6 +15,8 @@ interface ApolloSearchRequest {
 }
 
 serve(async (req) => {
+  const corsHeaders = getCorsHeaders(req.headers.get("origin"));
+
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
@@ -136,7 +138,7 @@ serve(async (req) => {
       console.error("Apollo API error:", errorText);
       
       // Fallback to AI-generated data if Apollo fails
-      return await generateFallbackLeads(user.id, { country, city, industry, companySize, jobTitles, revenueTier, limit });
+      return await generateFallbackLeads(req, user.id, { country, city, industry, companySize, jobTitles, revenueTier, limit });
     }
 
     const apolloData = await apolloResponse.json();
@@ -144,7 +146,7 @@ serve(async (req) => {
 
     if (!apolloData.people || apolloData.people.length === 0) {
       // Fallback to AI-generated data if no results
-      return await generateFallbackLeads(user.id, { country, city, industry, companySize, jobTitles, revenueTier, limit });
+      return await generateFallbackLeads(req, user.id, { country, city, industry, companySize, jobTitles, revenueTier, limit });
     }
 
     const supabase = createServiceClient();
@@ -226,6 +228,7 @@ serve(async (req) => {
     );
   } catch (error: unknown) {
     console.error("Apollo search error:", error);
+    const corsHeaders = getCorsHeaders(req.headers.get("origin"));
     return new Response(
       JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -253,9 +256,11 @@ function categorizeRevenue(revenue: number): string {
 }
 
 async function generateFallbackLeads(
+  req: Request,
   userId: string,
   params: ApolloSearchRequest
 ): Promise<Response> {
+  const corsHeaders = getCorsHeaders(req.headers.get("origin"));
   console.log("Using AI fallback for lead generation - DATA WILL BE SIMULATED");
   
   const lovableApiKey = Deno.env.get("LOVABLE_API_KEY");
