@@ -14,6 +14,30 @@ export type Database = {
   }
   public: {
     Tables: {
+      auth_rate_limits: {
+        Row: {
+          attempt_type: string
+          attempted_at: string
+          id: string
+          identifier: string
+          success: boolean
+        }
+        Insert: {
+          attempt_type: string
+          attempted_at?: string
+          id?: string
+          identifier: string
+          success?: boolean
+        }
+        Update: {
+          attempt_type?: string
+          attempted_at?: string
+          id?: string
+          identifier?: string
+          success?: boolean
+        }
+        Relationships: []
+      }
       billing_plans: {
         Row: {
           ai_call_minutes: number
@@ -418,6 +442,19 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      check_auth_rate_limit: {
+        Args: {
+          p_attempt_type: string
+          p_identifier: string
+          p_max_attempts?: number
+          p_window_minutes?: number
+        }
+        Returns: boolean
+      }
+      clear_auth_rate_limit: {
+        Args: { p_attempt_type: string; p_identifier: string }
+        Returns: undefined
+      }
       decrypt_crm_api_key: { Args: { p_secret_id: string }; Returns: string }
       delete_crm_api_key: { Args: { p_secret_id: string }; Returns: boolean }
       encrypt_crm_api_key: {
@@ -439,6 +476,14 @@ export type Database = {
           _user_id: string
         }
         Returns: boolean
+      }
+      record_auth_attempt: {
+        Args: {
+          p_attempt_type: string
+          p_identifier: string
+          p_success?: boolean
+        }
+        Returns: undefined
       }
       update_crm_api_key: {
         Args: { p_new_api_key: string; p_secret_id: string }

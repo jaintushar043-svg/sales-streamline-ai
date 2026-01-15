@@ -11,6 +11,35 @@ interface AuthContextType {
   signOut: () => Promise<void>;
 }
 
+const checkRateLimit = async (identifier: string, attemptType: string): Promise<boolean> => {
+  const { data, error } = await supabase.rpc('check_auth_rate_limit', {
+    p_identifier: identifier,
+    p_attempt_type: attemptType,
+    p_max_attempts: 5,
+    p_window_minutes: 15
+  });
+  if (error) {
+    console.error('Rate limit check error:', error);
+    return false; // Fail open to not block legitimate users
+  }
+  return data === true;
+};
+
+const recordAuthAttempt = async (identifier: string, attemptType: string, success: boolean): Promise<void> => {
+  await supabase.rpc('record_auth_attempt', {
+    p_identifier: identifier,
+    p_attempt_type: attemptType,
+    p_success: success
+  });
+};
+
+const clearRateLimit = async (identifier: string, attemptType: string): Promise<void> => {
+  await supabase.rpc('clear_auth_rate_limit', {
+    p_identifier: identifier,
+    p_attempt_type: attemptType
+  });
+};
+
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
@@ -39,6 +68,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   }, []);
 
   const signUp = async (email: string, password: string, fullName: string, company: string) => {
+    // Check rate limit before attempting signup
+    const isRateLimited = await checkRateLimit(email, 'signup');
+    if (isRateLimited) {
+      return { error: new Error('Too many signup attempts. Please try again in 15 minutes.') };
+    }
+
     const { error } = await supabase.auth.signUp({
       email,
       password,
@@ -50,14 +85,36 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         },
       },
     });
+
+    // Record the attempt
+    await recordAuthAttempt(email, 'signup', !error);
+    
+    if (!error) {
+      await clearRateLimit(email, 'signup');
+    }
+
     return { error };
   };
 
   const signIn = async (email: string, password: string) => {
+    // Check rate limit before attempting login
+    const isRateLimited = await checkRateLimit(email, 'login');
+    if (isRateLimited) {
+      return { error: new Error('Too many login attempts. Please try again in 15 minutes.') };
+    }
+
     const { error } = await supabase.auth.signInWithPassword({
       email,
       password,
     });
+
+    // Record the attempt
+    await recordAuthAttempt(email, 'login', !error);
+    
+    if (!error) {
+      await clearRateLimit(email, 'login');
+    }
+
     return { error };
   };
 
