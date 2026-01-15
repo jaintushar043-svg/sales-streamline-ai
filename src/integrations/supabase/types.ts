@@ -124,6 +124,7 @@ export type Database = {
       crm_connections: {
         Row: {
           api_key: string | null
+          api_key_encrypted: boolean | null
           created_at: string
           id: string
           is_active: boolean | null
@@ -136,6 +137,7 @@ export type Database = {
         }
         Insert: {
           api_key?: string | null
+          api_key_encrypted?: boolean | null
           created_at?: string
           id?: string
           is_active?: boolean | null
@@ -148,6 +150,7 @@ export type Database = {
         }
         Update: {
           api_key?: string | null
+          api_key_encrypted?: boolean | null
           created_at?: string
           id?: string
           is_active?: boolean | null
@@ -415,6 +418,12 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      decrypt_crm_api_key: { Args: { p_secret_id: string }; Returns: string }
+      delete_crm_api_key: { Args: { p_secret_id: string }; Returns: boolean }
+      encrypt_crm_api_key: {
+        Args: { p_api_key: string; p_connection_id: string }
+        Returns: string
+      }
       get_user_usage: {
         Args: { _user_id: string }
         Returns: {
@@ -429,6 +438,10 @@ export type Database = {
           _role: Database["public"]["Enums"]["app_role"]
           _user_id: string
         }
+        Returns: boolean
+      }
+      update_crm_api_key: {
+        Args: { p_new_api_key: string; p_secret_id: string }
         Returns: boolean
       }
     }

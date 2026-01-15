@@ -38,3 +38,6 @@ verify_jwt = false
 
 [functions.apollo-search]
 verify_jwt = false
+
+[functions.save-crm-connection]
+verify_jwt = false

@@ -158,23 +158,33 @@ const CRMSync = ({ leads, userId }: CRMSyncProps) => {
 
     setIsSaving(true);
     try {
-      const { data, error } = await supabase
-        .from("crm_connections")
-        .insert({
-          user_id: userId,
+      // Use edge function to securely save connection with encrypted API key
+      const response = await supabase.functions.invoke("save-crm-connection", {
+        body: {
           name: connectionName,
           webhook_url: webhookUrl,
-          api_key: apiKey || null,
-          is_active: true,
-        })
-        .select()
-        .single();
+          api_key: apiKey || undefined,
+        },
+      });
 
-      if (error) throw error;
+      if (response.error) {
+        throw new Error(response.error.message);
+      }
 
-      toast.success("CRM connection saved!");
-      setConnections(prev => [data, ...prev]);
-      setSelectedConnectionId(data.id);
+      const data = response.data;
+      if (!data.success) {
+        throw new Error(data.error || "Failed to save connection");
+      }
+
+      if (data.warning) {
+        toast.warning(data.warning);
+      } else {
+        toast.success("CRM connection saved securely!");
+      }
+
+      // Refresh connections list
+      await fetchConnections();
+      setSelectedConnectionId(data.connection.id);
       setIsSettingsOpen(false);
       
       // Reset form
@@ -185,7 +195,7 @@ const CRMSync = ({ leads, userId }: CRMSyncProps) => {
       setWebhookUrlError("");
     } catch (error) {
       console.error("Error saving connection:", error);
-      toast.error("Failed to save CRM connection");
+      toast.error(error instanceof Error ? error.message : "Failed to save CRM connection");
     } finally {
       setIsSaving(false);
     }
