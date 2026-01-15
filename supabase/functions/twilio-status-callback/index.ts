@@ -1,9 +1,12 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { corsHeaders } from "../_shared/cors.ts";
+import { getCorsHeaders } from "../_shared/cors.ts";
 import { createServiceClient } from "../_shared/supabase.ts";
 import { logUsage } from "../_shared/usage.ts";
+import { validateTwilioSignature, parseFormDataForValidation } from "../_shared/twilio-validation.ts";
 
 serve(async (req) => {
+  const corsHeaders = getCorsHeaders(req.headers.get("origin"));
+
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
   }
@@ -16,8 +19,14 @@ serve(async (req) => {
       return new Response("Missing callId", { status: 400 });
     }
 
-    // Parse form data from Twilio
-    const formData = await req.formData();
+    // Parse form data and validate Twilio signature
+    const { formData, params } = await parseFormDataForValidation(req);
+    
+    if (!validateTwilioSignature(req, params)) {
+      console.error("Invalid Twilio signature for status callback");
+      return new Response("Unauthorized", { status: 403 });
+    }
+
     const callStatus = formData.get("CallStatus") as string;
     const callDuration = formData.get("CallDuration") as string;
     const callSid = formData.get("CallSid") as string;

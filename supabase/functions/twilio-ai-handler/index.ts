@@ -1,5 +1,6 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
+import { validateTwilioSignature, parseFormDataForValidation } from "../_shared/twilio-validation.ts";
 
 // AI Sales Script Templates
 const SCRIPTS = {
@@ -28,6 +29,16 @@ const SCRIPTS = {
 
 serve(async (req) => {
   try {
+    // For POST requests (Twilio callbacks), validate the signature
+    if (req.method === "POST") {
+      const { params } = await parseFormDataForValidation(req);
+      
+      if (!validateTwilioSignature(req, params)) {
+        console.error("Invalid Twilio signature for AI handler");
+        return new Response("Unauthorized", { status: 403 });
+      }
+    }
+
     const url = new URL(req.url);
     const callId = url.searchParams.get("callId");
     const leadName = url.searchParams.get("leadName") || "there";

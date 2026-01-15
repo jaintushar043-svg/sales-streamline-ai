@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { createServiceClient } from "../_shared/supabase.ts";
+import { validateTwilioSignature, parseFormDataForValidation } from "../_shared/twilio-validation.ts";
 
 const SCRIPT_STAGES = ["intro", "pitch", "qualification", "pain", "cta", "close"];
 
@@ -39,6 +40,14 @@ const OBJECTION_HANDLERS: Record<string, string> = {
 
 serve(async (req) => {
   try {
+    // Validate Twilio signature
+    const { formData, params } = await parseFormDataForValidation(req);
+    
+    if (!validateTwilioSignature(req, params)) {
+      console.error("Invalid Twilio signature for AI response");
+      return new Response("Unauthorized", { status: 403 });
+    }
+
     const url = new URL(req.url);
     const callId = url.searchParams.get("callId");
     const currentStage = url.searchParams.get("stage") || "intro";
@@ -46,8 +55,6 @@ serve(async (req) => {
     const leadName = url.searchParams.get("leadName") || "there";
     const companyName = url.searchParams.get("companyName") || "your company";
 
-    // Parse form data from Twilio
-    const formData = await req.formData();
     const speechResult = (formData.get("SpeechResult") as string) || "";
     const confidence = formData.get("Confidence") as string;
 
