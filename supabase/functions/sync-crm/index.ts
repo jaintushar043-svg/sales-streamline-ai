@@ -143,12 +143,26 @@ serve(async (req) => {
       }
 
       try {
+        // Decrypt API key if it's encrypted
+        let actualApiKey: string | null = null;
+        if (connection.api_key && connection.api_key_encrypted) {
+          const { data: decryptedKey, error: decryptError } = await supabase
+            .rpc("decrypt_crm_api_key", { p_secret_id: connection.api_key });
+          
+          if (!decryptError && decryptedKey) {
+            actualApiKey = decryptedKey;
+          }
+        } else if (connection.api_key) {
+          // Legacy: plain text API key (for backward compatibility)
+          actualApiKey = connection.api_key;
+        }
+
         // Send to webhook
         const webhookResponse = await fetch(connection.webhook_url, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            ...(connection.api_key ? { "Authorization": `Bearer ${connection.api_key}` } : {}),
+            ...(actualApiKey ? { "Authorization": `Bearer ${actualApiKey}` } : {}),
           },
           body: JSON.stringify(payload),
         });
