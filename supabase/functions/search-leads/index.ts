@@ -3,6 +3,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { corsHeaders } from "../_shared/cors.ts";
 import { createServiceClient, getUserFromAuth } from "../_shared/supabase.ts";
 import { checkUsageLimit, logUsage } from "../_shared/usage.ts";
+import { sanitizePromptInput } from "../_shared/security-utils.ts";
 
 interface SearchCriteria {
   industry?: string;
@@ -49,16 +50,24 @@ serve(async (req) => {
     // Use Lovable AI to generate realistic lead data based on criteria
     const lovableApiKey = Deno.env.get("LOVABLE_API_KEY");
     
-    const locationString = criteria.location && criteria.location !== "all" 
-      ? `${criteria.location}, ${criteria.country}` 
-      : criteria.country || "Global";
+    // Sanitize all user inputs to prevent prompt injection
+    const sanitizedIndustry = sanitizePromptInput(criteria.industry, 50);
+    const sanitizedCompanySize = sanitizePromptInput(criteria.companySize, 30);
+    const sanitizedJobTitle = sanitizePromptInput(criteria.jobTitle, 50);
+    const sanitizedLocation = sanitizePromptInput(criteria.location, 50);
+    const sanitizedCountry = sanitizePromptInput(criteria.country, 50);
+    const sanitizedRevenueTier = sanitizePromptInput(criteria.revenueTier, 30);
+    
+    const locationString = sanitizedLocation && sanitizedLocation !== "all" 
+      ? `${sanitizedLocation}, ${sanitizedCountry}` 
+      : sanitizedCountry || "Global";
     
     const prompt = `Generate ${searchLimit} realistic B2B lead profiles matching these criteria:
-- Industry: ${criteria.industry || "Any B2B industry"}
-- Company Size: ${criteria.companySize || "Any size"}
-- Job Title: ${criteria.jobTitle || "Decision maker (CEO, CTO, VP, Director)"}
+- Industry: ${sanitizedIndustry || "Any B2B industry"}
+- Company Size: ${sanitizedCompanySize || "Any size"}
+- Job Title: ${sanitizedJobTitle || "Decision maker (CEO, CTO, VP, Director)"}
 - Location: ${locationString}
-- Revenue Tier: ${criteria.revenueTier || "Any revenue"}
+- Revenue Tier: ${sanitizedRevenueTier || "Any revenue"}
 
 For each lead, provide realistic data for the specified location. If India cities like Bengaluru, Mumbai, Delhi, Hyderabad, Pune, Chennai are specified, generate Indian names, Indian phone numbers (+91), and .in domain emails. If UAE/Dubai is specified, use Middle Eastern names and +971 numbers. For each lead include:
 - full_name: Realistic full name appropriate for the location

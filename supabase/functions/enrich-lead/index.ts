@@ -3,6 +3,7 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { corsHeaders } from "../_shared/cors.ts";
 import { createServiceClient, getUserFromAuth } from "../_shared/supabase.ts";
 import { checkUsageLimit, logUsage } from "../_shared/usage.ts";
+import { sanitizePromptInput } from "../_shared/security-utils.ts";
 
 interface EnrichRequest {
   leadIds: string[];
@@ -84,14 +85,21 @@ serve(async (req) => {
 
     // Enrich each lead using AI
     for (const lead of leadsToEnrich) {
+      // Sanitize all lead fields to prevent prompt injection
+      const sanitizedName = sanitizePromptInput(lead.full_name, 100);
+      const sanitizedJobTitle = sanitizePromptInput(lead.job_title, 100);
+      const sanitizedCompany = sanitizePromptInput(lead.company_name, 100);
+      const sanitizedIndustry = sanitizePromptInput(lead.industry, 50);
+      const sanitizedCompanySize = sanitizePromptInput(lead.company_size, 30);
+      
       const prompt = `Analyze this B2B lead and provide enrichment data:
 
 Lead Information:
-- Name: ${lead.full_name}
-- Job Title: ${lead.job_title || "Unknown"}
-- Company: ${lead.company_name || "Unknown"}
-- Industry: ${lead.industry || "Unknown"}
-- Company Size: ${lead.company_size || "Unknown"}
+- Name: ${sanitizedName}
+- Job Title: ${sanitizedJobTitle || "Unknown"}
+- Company: ${sanitizedCompany || "Unknown"}
+- Industry: ${sanitizedIndustry || "Unknown"}
+- Company Size: ${sanitizedCompanySize || "Unknown"}
 
 Provide a JSON response with:
 {

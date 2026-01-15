@@ -1,6 +1,7 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { corsHeaders } from "../_shared/cors.ts";
 import { createServiceClient, getUserFromAuth } from "../_shared/supabase.ts";
+import { validateWebhookUrl } from "../_shared/security-utils.ts";
 
 interface SyncRequest {
   leadIds: string[];
@@ -61,6 +62,16 @@ serve(async (req) => {
       return new Response(
         JSON.stringify({ error: "No active CRM connection found" }),
         { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // Validate webhook URL to prevent SSRF attacks
+    const urlValidation = validateWebhookUrl(connection.webhook_url);
+    if (!urlValidation.valid) {
+      console.error("Invalid webhook URL blocked:", connection.webhook_url, urlValidation.error);
+      return new Response(
+        JSON.stringify({ error: `Invalid webhook URL: ${urlValidation.error}` }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
