@@ -103,18 +103,42 @@ const CRMSync = ({ leads, userId }: CRMSyncProps) => {
     }
   }, [userId]);
 
+  /**
+   * SECURITY: Fetch connections from secure view that masks API keys.
+   * The crm_connections_secure view never exposes actual API keys to the client.
+   * It only returns has_api_key (boolean) and api_key_masked (****xxxx format).
+   */
   const fetchConnections = async () => {
     if (!userId) return;
+    // SECURITY: Use the secure view that masks API keys
+    // This view never returns the actual api_key column
     const { data } = await supabase
-      .from("crm_connections")
+      .from("crm_connections_secure")
       .select("*")
-      .eq("user_id", userId)
       .eq("is_active", true)
       .order("created_at", { ascending: false });
     
-    setConnections(data || []);
-    if (data && data.length > 0) {
-      setSelectedConnectionId(data[0].id);
+    // Map secure view data to connection type (without sensitive api_key field)
+    const secureConnections = (data || []).map((conn: any) => ({
+      id: conn.id,
+      user_id: conn.user_id,
+      name: conn.name,
+      webhook_url: conn.webhook_url,
+      is_active: conn.is_active,
+      last_sync_at: conn.last_sync_at,
+      sync_errors: conn.sync_errors,
+      created_at: conn.created_at,
+      updated_at: conn.updated_at,
+      api_key_encrypted: conn.api_key_encrypted,
+      // SECURITY: Never store actual API key in state
+      api_key: null, // Always null - we use has_api_key and api_key_masked instead
+      has_api_key: conn.has_api_key,
+      api_key_masked: conn.api_key_masked,
+    }));
+    
+    setConnections(secureConnections as CRMConnection[]);
+    if (secureConnections.length > 0) {
+      setSelectedConnectionId(secureConnections[0].id);
     }
   };
 

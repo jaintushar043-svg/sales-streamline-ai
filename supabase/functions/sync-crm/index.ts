@@ -37,21 +37,35 @@ serve(async (req) => {
 
     const supabase = createServiceClient();
 
-    // Get user's CRM connection
+    // SECURITY: Get user's CRM connection using SECURITY DEFINER function
+    // This ensures we access the connection data securely without exposing API keys in logs
     let connection;
     if (connectionId) {
-      const { data } = await supabase
-        .from("crm_connections")
-        .select("*")
-        .eq("id", connectionId)
-        .eq("user_id", user.id)
-        .eq("is_active", true)
-        .single();
-      connection = data;
+      // Use secure function to get connection for sync
+      const { data, error: connError } = await supabase
+        .rpc("get_crm_connection_for_sync", {
+          p_connection_id: connectionId,
+          p_user_id: user.id,
+        });
+      
+      if (connError) {
+        console.error("Error fetching connection:", connError.message);
+        // Don't log the full error object as it might contain sensitive info
+      }
+      connection = data?.[0] ? {
+        id: data[0].id,
+        user_id: data[0].user_id,
+        name: data[0].name,
+        webhook_url: data[0].webhook_url,
+        is_active: data[0].is_active,
+        api_key_encrypted: data[0].has_encrypted_key,
+        api_key: data[0].encrypted_key_id, // This is the vault secret ID, not the actual key
+      } : null;
     } else {
+      // Get most recent active connection for user
       const { data } = await supabase
         .from("crm_connections")
-        .select("*")
+        .select("id, user_id, name, webhook_url, is_active, api_key_encrypted, api_key")
         .eq("user_id", user.id)
         .eq("is_active", true)
         .order("created_at", { ascending: false })
@@ -145,21 +159,30 @@ serve(async (req) => {
       }
 
       try {
-        // Decrypt API key if it's encrypted
+        // SECURITY: Decrypt API key server-side only if it's encrypted in vault
+        // The api_key field contains a vault secret ID, not the actual key
+        // NEVER log the decrypted key or send it to the frontend
         let actualApiKey: string | null = null;
         if (connection.api_key && connection.api_key_encrypted) {
-          const { data: decryptedKey, error: decryptError } = await supabase
-            .rpc("decrypt_crm_api_key", { p_secret_id: connection.api_key });
-          
-          if (!decryptError && decryptedKey) {
-            actualApiKey = decryptedKey;
+          try {
+            const { data: decryptedKey, error: decryptError } = await supabase
+              .rpc("decrypt_crm_api_key", { p_secret_id: connection.api_key });
+            
+            if (decryptError) {
+              // Log error without sensitive details
+              console.error("API key decryption failed for connection");
+            } else if (decryptedKey) {
+              actualApiKey = decryptedKey;
+            }
+          } catch (decryptErr) {
+            // SECURITY: Don't expose decryption errors in detail
+            console.error("Failed to decrypt API key");
           }
-        } else if (connection.api_key) {
-          // Legacy: plain text API key (for backward compatibility)
-          actualApiKey = connection.api_key;
         }
+        // SECURITY: No longer support legacy plaintext keys
+        // All keys should be encrypted via vault
 
-        // Send to webhook
+        // Send to webhook - API key only used in Authorization header, never logged
         const webhookResponse = await fetch(connection.webhook_url, {
           method: "POST",
           headers: {
@@ -168,6 +191,9 @@ serve(async (req) => {
           },
           body: JSON.stringify(payload),
         });
+        
+        // SECURITY: Clear the decrypted key from memory after use
+        actualApiKey = null;
 
         if (webhookResponse.ok) {
           const responseData = await webhookResponse.json().catch(() => ({}));

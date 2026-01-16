@@ -233,6 +233,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "crm_sync_logs_connection_id_fkey"
+            columns: ["connection_id"]
+            isOneToOne: false
+            referencedRelation: "crm_connections_secure"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "crm_sync_logs_lead_id_fkey"
             columns: ["lead_id"]
             isOneToOne: false
@@ -439,7 +446,51 @@ export type Database = {
       }
     }
     Views: {
-      [_ in never]: never
+      crm_connections_secure: {
+        Row: {
+          api_key_encrypted: boolean | null
+          api_key_masked: string | null
+          created_at: string | null
+          has_api_key: boolean | null
+          id: string | null
+          is_active: boolean | null
+          last_sync_at: string | null
+          name: string | null
+          sync_errors: Json | null
+          updated_at: string | null
+          user_id: string | null
+          webhook_url: string | null
+        }
+        Insert: {
+          api_key_encrypted?: boolean | null
+          api_key_masked?: never
+          created_at?: string | null
+          has_api_key?: never
+          id?: string | null
+          is_active?: boolean | null
+          last_sync_at?: string | null
+          name?: string | null
+          sync_errors?: Json | null
+          updated_at?: string | null
+          user_id?: string | null
+          webhook_url?: string | null
+        }
+        Update: {
+          api_key_encrypted?: boolean | null
+          api_key_masked?: never
+          created_at?: string | null
+          has_api_key?: never
+          id?: string | null
+          is_active?: boolean | null
+          last_sync_at?: string | null
+          name?: string | null
+          sync_errors?: Json | null
+          updated_at?: string | null
+          user_id?: string | null
+          webhook_url?: string | null
+        }
+        Relationships: []
+      }
     }
     Functions: {
       check_auth_rate_limit: {
@@ -460,6 +511,18 @@ export type Database = {
       encrypt_crm_api_key: {
         Args: { p_api_key: string; p_connection_id: string }
         Returns: string
+      }
+      get_crm_connection_for_sync: {
+        Args: { p_connection_id: string; p_user_id: string }
+        Returns: {
+          encrypted_key_id: string
+          has_encrypted_key: boolean
+          id: string
+          is_active: boolean
+          name: string
+          user_id: string
+          webhook_url: string
+        }[]
       }
       get_user_usage: {
         Args: { _user_id: string }
