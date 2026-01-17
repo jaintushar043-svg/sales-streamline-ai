@@ -77,6 +77,7 @@ export type Database = {
       calls: {
         Row: {
           ai_script_type: string | null
+          ai_summary: string | null
           call_sid: string | null
           call_summary: string | null
           call_type: string
@@ -94,9 +95,12 @@ export type Database = {
           status: string | null
           transcript: string | null
           user_id: string
+          vapi_call_id: string | null
+          vapi_recording_url: string | null
         }
         Insert: {
           ai_script_type?: string | null
+          ai_summary?: string | null
           call_sid?: string | null
           call_summary?: string | null
           call_type?: string
@@ -114,9 +118,12 @@ export type Database = {
           status?: string | null
           transcript?: string | null
           user_id: string
+          vapi_call_id?: string | null
+          vapi_recording_url?: string | null
         }
         Update: {
           ai_script_type?: string | null
+          ai_summary?: string | null
           call_sid?: string | null
           call_summary?: string | null
           call_type?: string
@@ -134,6 +141,8 @@ export type Database = {
           status?: string | null
           transcript?: string | null
           user_id?: string
+          vapi_call_id?: string | null
+          vapi_recording_url?: string | null
         }
         Relationships: [
           {

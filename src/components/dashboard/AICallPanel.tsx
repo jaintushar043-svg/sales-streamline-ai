@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -6,10 +6,11 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
-import { Phone, Loader2, Bot, User, PhoneCall, PhoneOff, MessageSquare, Clock, CheckCircle2, FlaskConical } from "lucide-react";
+import { Phone, Loader2, Bot, User, PhoneCall, PhoneOff, MessageSquare, Clock, CheckCircle2, FlaskConical, Zap, Volume2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { Tables } from "@/integrations/supabase/types";
+import { RealtimeChannel } from "@supabase/supabase-js";
 
 type Lead = Tables<"leads">;
 
@@ -21,6 +22,7 @@ const CALL_SCRIPTS = {
   cold_outreach: {
     name: "Cold Outreach",
     description: "First-time call to qualify the lead and book a demo",
+    aiDescription: "AI will introduce TechMarqX, qualify the lead, discover pain points, and attempt to book a demo.",
     steps: [
       "Introduce yourself as Alex from TechMarqX",
       "Check if it's a good time to talk",
@@ -35,6 +37,7 @@ const CALL_SCRIPTS = {
   follow_up: {
     name: "Follow-Up Call",
     description: "Follow up on previous interest to move deal forward",
+    aiDescription: "AI will reference previous interactions, check for changes in needs, and push for next steps.",
     steps: [
       "Reconnect with warm greeting",
       "Reference previous conversation",
@@ -48,6 +51,7 @@ const CALL_SCRIPTS = {
   demo_booking: {
     name: "Demo Booking",
     description: "Direct call to schedule a product demo",
+    aiDescription: "AI will confirm interest, gather requirements, and book a specific demo time.",
     steps: [
       "Confirm interest in seeing the platform",
       "Highlight 15-minute demo format",
@@ -61,18 +65,22 @@ const CALL_SCRIPTS = {
 
 const AICallPanel = ({ lead }: AICallPanelProps) => {
   const [isOpen, setIsOpen] = useState(false);
-  const [callType, setCallType] = useState<"ai_agent" | "manual">("ai_agent");
   const [scriptType, setScriptType] = useState<"cold_outreach" | "follow_up" | "demo_booking">("cold_outreach");
   const [isInitiating, setIsInitiating] = useState(false);
   const [callState, setCallState] = useState<"idle" | "connecting" | "in_progress" | "ended">("idle");
   const [callData, setCallData] = useState<{
     id: string;
-    script: string;
+    vapiCallId?: string;
+    transcript?: string;
+    summary?: string;
+    outcome?: string;
   } | null>(null);
   const [notes, setNotes] = useState("");
-  const [demoMode, setDemoMode] = useState(true); // Default to demo mode for safety
+  const [demoMode, setDemoMode] = useState(false); // Default to real mode now
   const [callDuration, setCallDuration] = useState(0);
   const [demoTranscript, setDemoTranscript] = useState<string[]>([]);
+  const [liveTranscript, setLiveTranscript] = useState<string>("");
+  const [realtimeChannel, setRealtimeChannel] = useState<RealtimeChannel | null>(null);
 
   const selectedScript = CALL_SCRIPTS[scriptType];
 
@@ -87,14 +95,72 @@ const AICallPanel = ({ lead }: AICallPanelProps) => {
     return () => clearInterval(interval);
   }, [callState]);
 
+  // Subscribe to real-time call updates
+  const subscribeToCallUpdates = useCallback((callId: string) => {
+    console.log("Subscribing to call updates for:", callId);
+    
+    const channel = supabase
+      .channel(`call-${callId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "calls",
+          filter: `id=eq.${callId}`,
+        },
+        (payload) => {
+          console.log("Call update received:", payload.new);
+          const updatedCall = payload.new as Record<string, unknown>;
+          
+          // Update call state based on status
+          const status = updatedCall.status as string;
+          if (status === "in_progress") {
+            setCallState("in_progress");
+          } else if (status === "completed" || status === "failed") {
+            setCallState("ended");
+            setCallData((prev) => prev ? {
+              ...prev,
+              transcript: updatedCall.transcript as string || prev.transcript,
+              summary: updatedCall.ai_summary as string || updatedCall.call_summary as string,
+              outcome: updatedCall.outcome as string,
+            } : null);
+            
+            // Update duration if available
+            if (updatedCall.duration_seconds) {
+              setCallDuration(updatedCall.duration_seconds as number);
+            }
+          }
+          
+          // Update transcript in real-time
+          if (updatedCall.transcript) {
+            setLiveTranscript(updatedCall.transcript as string);
+          }
+        }
+      )
+      .subscribe();
+
+    setRealtimeChannel(channel);
+    return channel;
+  }, []);
+
+  // Cleanup realtime subscription
+  useEffect(() => {
+    return () => {
+      if (realtimeChannel) {
+        supabase.removeChannel(realtimeChannel);
+      }
+    };
+  }, [realtimeChannel]);
+
   // Demo mode transcript simulation
   useEffect(() => {
     if (!demoMode || callState !== "in_progress") return;
     
     const demoMessages = [
-      { delay: 2000, speaker: "AI", text: `Hi, this is Alex from TechMarqX. Am I speaking with ${lead.full_name}?` },
+      { delay: 2000, speaker: "AI", text: `Hi, is this ${lead.full_name}? This is Alex from TechMarqX. I hope I'm not catching you at a bad time?` },
       { delay: 5000, speaker: "Lead", text: "Yes, this is them. How can I help you?" },
-      { delay: 8000, speaker: "AI", text: `Great to connect! I noticed ${lead.company_name} is in the ${lead.industry || "tech"} space. We help companies like yours streamline their sales outreach.` },
+      { delay: 8000, speaker: "AI", text: `Great to connect! I noticed ${lead.company_name} is in the ${lead.industry || "tech"} space. We help companies like yours streamline their sales outreach with AI.` },
       { delay: 12000, speaker: "Lead", text: "Interesting, tell me more." },
       { delay: 15000, speaker: "AI", text: "Our AI-powered platform can help your team book 3x more demos with qualified leads. Would you be open to a quick 15-minute demo?" },
       { delay: 19000, speaker: "Lead", text: "Sure, that sounds useful. What times work?" },
@@ -128,6 +194,7 @@ const AICallPanel = ({ lead }: AICallPanelProps) => {
     setCallState("connecting");
     setCallDuration(0);
     setDemoTranscript([]);
+    setLiveTranscript("");
 
     try {
       if (demoMode) {
@@ -136,55 +203,66 @@ const AICallPanel = ({ lead }: AICallPanelProps) => {
         
         setCallData({
           id: `demo-${Date.now()}`,
-          script: CALL_SCRIPTS[scriptType]?.steps.join("\n• ") || "",
         });
         setCallState("in_progress");
         toast.success("Demo call started", {
-          description: `Simulating call to ${lead.phone}...`,
+          description: `Simulating AI call to ${lead.phone}...`,
           icon: <FlaskConical className="w-4 h-4" />,
         });
       } else {
-        // Use real Twilio integration
-        const response = await supabase.functions.invoke("twilio-call", {
+        // Use Vapi.ai for real AI voice calls
+        console.log("Initiating Vapi call for lead:", lead.id);
+        
+        const response = await supabase.functions.invoke("vapi-outbound-call", {
           body: {
             leadId: lead.id,
-            toPhoneNumber: lead.phone,
-            callType,
+            phoneNumber: lead.phone,
             scriptType,
           },
         });
 
         if (response.error) {
+          console.error("Vapi call error:", response.error);
           throw new Error(response.error.message);
         }
 
         const data = response.data;
+        console.log("Vapi call response:", data);
+        
         if (data.success) {
           setCallData({
             id: data.callId,
-            script: CALL_SCRIPTS[scriptType]?.steps.join("\n• ") || "",
+            vapiCallId: data.vapiCallId,
           });
+          
+          // Subscribe to real-time updates for this call
+          subscribeToCallUpdates(data.callId);
+          
           setCallState("in_progress");
-          toast.success("Call initiated via Twilio", {
-            description: `Calling ${lead.phone}...`,
+          toast.success("AI Agent call initiated", {
+            description: `Vapi AI is calling ${lead.phone}...`,
+            icon: <Zap className="w-4 h-4" />,
           });
         } else {
-          throw new Error(data.error);
+          throw new Error(data.error || "Failed to initiate call");
         }
       }
     } catch (error) {
       console.error("Call initiation error:", error);
       setCallState("idle");
-      if (error instanceof Error && error.message.includes("429")) {
+      
+      const errorMessage = error instanceof Error ? error.message : "Failed to initiate call";
+      
+      if (errorMessage.includes("429") || errorMessage.includes("limit")) {
         toast.error("Call limit exceeded. Please upgrade your plan.");
-      } else if (error instanceof Error && error.message.includes("Twilio credentials")) {
-        toast.error("Twilio not configured. Please add your Twilio credentials.");
-      } else if (error instanceof Error && error.message.includes("unverified")) {
-        toast.error("Twilio trial restriction", {
-          description: "This number is not verified. Use demo mode or verify in Twilio console.",
+      } else if (errorMessage.includes("Vapi API key")) {
+        toast.error("Vapi not configured", {
+          description: "Please add your VAPI_API_KEY in the project secrets.",
         });
+      } else if (errorMessage.includes("Unauthorized")) {
+        toast.error("Please log in to make calls");
       } else {
-        toast.error(error instanceof Error ? error.message : "Failed to initiate call");
+        toast.error(errorMessage);
       }
     } finally {
       setIsInitiating(false);
@@ -195,16 +273,22 @@ const AICallPanel = ({ lead }: AICallPanelProps) => {
     if (!callData?.id) return;
 
     try {
-      // Skip backend call in demo mode since no real call record exists
       if (demoMode) {
         setCallState("ended");
+        setCallData((prev) => prev ? {
+          ...prev,
+          outcome: "demo_completed",
+          summary: "Demo call completed. In production, this would be a real AI conversation.",
+        } : null);
         toast.success("Demo call completed", {
-          description: "In production, this would log the call to your CRM.",
+          description: "In production, calls are handled entirely by Vapi AI.",
           icon: <FlaskConical className="w-4 h-4" />,
         });
         return;
       }
 
+      // For real calls, Vapi handles the call end automatically
+      // We just update our local state - the webhook will update the database
       const response = await supabase.functions.invoke("complete-call", {
         body: {
           callId: callData.id,
@@ -222,6 +306,7 @@ const AICallPanel = ({ lead }: AICallPanelProps) => {
       toast.success("Call completed and logged");
     } catch (error) {
       console.error("Error ending call:", error);
+      setCallState("ended");
     }
   };
 
@@ -231,6 +316,28 @@ const AICallPanel = ({ lead }: AICallPanelProps) => {
     setNotes("");
     setCallDuration(0);
     setDemoTranscript([]);
+    setLiveTranscript("");
+    if (realtimeChannel) {
+      supabase.removeChannel(realtimeChannel);
+      setRealtimeChannel(null);
+    }
+  };
+
+  const formatOutcome = (outcome: string | undefined) => {
+    switch (outcome) {
+      case "demo_booked":
+        return { label: "Demo Booked", color: "bg-green-500" };
+      case "not_interested":
+        return { label: "Not Interested", color: "bg-red-500" };
+      case "callback_scheduled":
+        return { label: "Callback Scheduled", color: "bg-blue-500" };
+      case "voicemail":
+        return { label: "Voicemail", color: "bg-yellow-500" };
+      case "no_answer":
+        return { label: "No Answer", color: "bg-gray-500" };
+      default:
+        return { label: "Completed", color: "bg-primary" };
+    }
   };
 
   return (
@@ -252,10 +359,14 @@ const AICallPanel = ({ lead }: AICallPanelProps) => {
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Phone className="w-5 h-5 text-primary" />
-            AI Sales Call
+            AI Voice Agent Call
+            <Badge variant="secondary" className="ml-2">
+              <Zap className="w-3 h-3 mr-1" />
+              Powered by Vapi
+            </Badge>
           </DialogTitle>
           <DialogDescription>
-            Initiate an AI-powered sales call to {lead.full_name}
+            Start an AI-powered voice call to {lead.full_name}
           </DialogDescription>
         </DialogHeader>
 
@@ -284,7 +395,7 @@ const AICallPanel = ({ lead }: AICallPanelProps) => {
                     Demo Mode
                   </Label>
                   <p className="text-xs text-amber-600 dark:text-amber-500">
-                    Simulate calls without using Twilio
+                    Simulate calls without making real phone calls
                   </p>
                 </div>
               </div>
@@ -295,57 +406,50 @@ const AICallPanel = ({ lead }: AICallPanelProps) => {
               />
             </div>
 
-            {/* Call Type Selection */}
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <Label>Call Type</Label>
-                <div className="grid grid-cols-2 gap-3">
-                  <Button
-                    variant={callType === "ai_agent" ? "default" : "outline"}
-                    className={callType === "ai_agent" ? "bg-hero-gradient" : ""}
-                    onClick={() => setCallType("ai_agent")}
-                  >
-                    <Bot className="w-4 h-4 mr-2" />
-                    AI Agent Call
-                  </Button>
-                  <Button
-                    variant={callType === "manual" ? "default" : "outline"}
-                    onClick={() => setCallType("manual")}
-                  >
-                    <User className="w-4 h-4 mr-2" />
-                    Manual Call
-                  </Button>
+            {/* AI Voice Info */}
+            {!demoMode && (
+              <div className="flex items-center gap-2 p-3 bg-primary/5 border border-primary/20 rounded-lg mb-4">
+                <Volume2 className="w-4 h-4 text-primary" />
+                <div>
+                  <p className="text-sm font-medium">Real AI Voice Agent</p>
+                  <p className="text-xs text-muted-foreground">
+                    AI agent "Alex" will speak naturally and respond in real-time
+                  </p>
                 </div>
               </div>
+            )}
 
-              {callType === "ai_agent" && (
-                <div className="space-y-2">
-                  <Label>Call Script</Label>
-                  <Select value={scriptType} onValueChange={(v) => setScriptType(v as typeof scriptType)}>
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="cold_outreach">Cold Outreach</SelectItem>
-                      <SelectItem value="follow_up">Follow-Up Call</SelectItem>
-                      <SelectItem value="demo_booking">Demo Booking</SelectItem>
-                    </SelectContent>
-                  </Select>
+            {/* Script Selection */}
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <Label>Call Script</Label>
+                <Select value={scriptType} onValueChange={(v) => setScriptType(v as typeof scriptType)}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="cold_outreach">Cold Outreach</SelectItem>
+                    <SelectItem value="follow_up">Follow-Up Call</SelectItem>
+                    <SelectItem value="demo_booking">Demo Booking</SelectItem>
+                  </SelectContent>
+                </Select>
 
-                  <div className="bg-muted/30 rounded-lg p-4 mt-3">
-                    <h4 className="font-medium text-sm mb-2">{selectedScript.name}</h4>
-                    <p className="text-xs text-muted-foreground mb-3">{selectedScript.description}</p>
-                    <div className="space-y-2">
-                      {selectedScript.steps.map((step, i) => (
-                        <div key={i} className="flex items-start gap-2 text-xs">
-                          <Badge variant="outline" className="text-[10px] px-1.5">{i + 1}</Badge>
-                          <span>{step}</span>
-                        </div>
-                      ))}
-                    </div>
+                <div className="bg-muted/30 rounded-lg p-4 mt-3">
+                  <div className="flex items-center gap-2 mb-2">
+                    <Bot className="w-4 h-4 text-primary" />
+                    <h4 className="font-medium text-sm">{selectedScript.name}</h4>
+                  </div>
+                  <p className="text-xs text-muted-foreground mb-3">{selectedScript.aiDescription}</p>
+                  <div className="space-y-2">
+                    {selectedScript.steps.map((step, i) => (
+                      <div key={i} className="flex items-start gap-2 text-xs">
+                        <Badge variant="outline" className="text-[10px] px-1.5">{i + 1}</Badge>
+                        <span>{step}</span>
+                      </div>
+                    ))}
                   </div>
                 </div>
-              )}
+              </div>
             </div>
 
             <div className="flex gap-3 pt-4 border-t">
@@ -365,7 +469,7 @@ const AICallPanel = ({ lead }: AICallPanelProps) => {
                 ) : (
                   <>
                     <PhoneCall className="w-4 h-4 mr-2" />
-                    Start Call
+                    Start AI Call
                   </>
                 )}
               </Button>
@@ -378,9 +482,13 @@ const AICallPanel = ({ lead }: AICallPanelProps) => {
             <div className="animate-pulse">
               <PhoneCall className="w-16 h-16 mx-auto text-primary mb-4" />
             </div>
-            <h3 className="text-lg font-semibold mb-2">Connecting Call...</h3>
+            <h3 className="text-lg font-semibold mb-2">
+              {demoMode ? "Starting Demo..." : "Connecting AI Agent..."}
+            </h3>
             <p className="text-sm text-muted-foreground">
-              {callType === "ai_agent" ? "Preparing AI agent script" : "Connecting to phone line"}
+              {demoMode 
+                ? "Simulating AI agent connection" 
+                : "Vapi AI is dialing the phone number"}
             </p>
           </div>
         )}
@@ -392,7 +500,9 @@ const AICallPanel = ({ lead }: AICallPanelProps) => {
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse" />
-                  <span className="font-medium text-green-700 dark:text-green-400">Call In Progress</span>
+                  <span className="font-medium text-green-700 dark:text-green-400">
+                    {demoMode ? "Demo Call In Progress" : "AI Agent Speaking"}
+                  </span>
                 </div>
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <Clock className="w-4 h-4" />
@@ -403,36 +513,35 @@ const AICallPanel = ({ lead }: AICallPanelProps) => {
                       Demo
                     </Badge>
                   )}
+                  {!demoMode && (
+                    <Badge variant="outline" className="text-primary border-primary/50">
+                      <Zap className="w-3 h-3 mr-1" />
+                      Live
+                    </Badge>
+                  )}
                 </div>
               </div>
             </div>
 
-            {/* Live Transcript for Demo Mode */}
-            {demoMode && demoTranscript.length > 0 && (
+            {/* Live Transcript */}
+            {(demoMode ? demoTranscript.length > 0 : liveTranscript) && (
               <div className="space-y-2">
                 <Label className="flex items-center gap-2">
                   <MessageSquare className="w-4 h-4" />
                   Live Transcript
                 </Label>
-                <div className="bg-muted/30 rounded-lg p-4 max-h-[200px] overflow-y-auto space-y-2">
-                  {demoTranscript.map((line, i) => (
-                    <p key={i} className={`text-xs ${line.startsWith("[AI]") ? "text-primary" : "text-muted-foreground"}`}>
-                      {line}
-                    </p>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* AI Script Display */}
-            {!demoMode && callType === "ai_agent" && callData?.script && (
-              <div className="space-y-2">
-                <Label className="flex items-center gap-2">
-                  <MessageSquare className="w-4 h-4" />
-                  AI Agent Script
-                </Label>
                 <div className="bg-muted/30 rounded-lg p-4 max-h-[200px] overflow-y-auto">
-                  <pre className="text-xs whitespace-pre-wrap font-mono">{callData.script}</pre>
+                  {demoMode ? (
+                    <div className="space-y-2">
+                      {demoTranscript.map((line, i) => (
+                        <p key={i} className={`text-xs ${line.startsWith("[AI]") ? "text-primary" : "text-muted-foreground"}`}>
+                          {line}
+                        </p>
+                      ))}
+                    </div>
+                  ) : (
+                    <pre className="text-xs whitespace-pre-wrap">{liveTranscript || "Waiting for transcript..."}</pre>
+                  )}
                 </div>
               </div>
             )}
@@ -463,17 +572,36 @@ const AICallPanel = ({ lead }: AICallPanelProps) => {
           <div className="py-8 text-center">
             <CheckCircle2 className="w-16 h-16 mx-auto text-green-500 mb-4" />
             <h3 className="text-lg font-semibold mb-2">Call Completed</h3>
-            <p className="text-sm text-muted-foreground mb-6">
-              The call has been logged and the lead status updated.
+            
+            {callData?.outcome && (
+              <Badge className={`${formatOutcome(callData.outcome).color} text-white mb-4`}>
+                {formatOutcome(callData.outcome).label}
+              </Badge>
+            )}
+            
+            {callData?.summary && (
+              <div className="text-left bg-muted/30 rounded-lg p-4 mt-4 mb-4">
+                <Label className="text-xs text-muted-foreground">AI Summary</Label>
+                <p className="text-sm mt-1">{callData.summary}</p>
+              </div>
+            )}
+            
+            {callData?.transcript && (
+              <div className="text-left bg-muted/30 rounded-lg p-4 mb-4">
+                <Label className="text-xs text-muted-foreground">Full Transcript</Label>
+                <pre className="text-xs mt-2 whitespace-pre-wrap max-h-[150px] overflow-y-auto">
+                  {callData.transcript}
+                </pre>
+              </div>
+            )}
+            
+            <p className="text-sm text-muted-foreground mb-4">
+              Duration: {formatDuration(callDuration)}
             </p>
-            <div className="flex gap-3">
-              <Button variant="outline" className="flex-1" onClick={() => setIsOpen(false)}>
-                Close
-              </Button>
-              <Button className="flex-1" onClick={resetCall}>
-                Make Another Call
-              </Button>
-            </div>
+            
+            <Button onClick={() => setIsOpen(false)} className="w-full">
+              Close
+            </Button>
           </div>
         )}
       </DialogContent>
