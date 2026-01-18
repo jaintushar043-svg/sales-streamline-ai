@@ -212,6 +212,8 @@ const AICallPanel = ({ lead }: AICallPanelProps) => {
       } else {
         // Use Vapi.ai for real AI voice calls
         console.log("Initiating Vapi call for lead:", lead.id);
+        console.log("Phone:", lead.phone);
+        console.log("Script type:", scriptType);
         
         const response = await supabase.functions.invoke("vapi-outbound-call", {
           body: {
@@ -221,13 +223,26 @@ const AICallPanel = ({ lead }: AICallPanelProps) => {
           },
         });
 
+        console.log("Edge function response:", response);
+
+        // Handle network or invocation errors
         if (response.error) {
-          console.error("Vapi call error:", response.error);
-          throw new Error(response.error.message);
+          console.error("Vapi call invocation error:", response.error);
+          const errorMsg = response.error.message || "Failed to reach edge function";
+          throw new Error(errorMsg);
         }
 
         const data = response.data;
-        console.log("Vapi call response:", data);
+        console.log("Vapi call response data:", data);
+        
+        // Check for error in response data
+        if (!data) {
+          throw new Error("No response from edge function");
+        }
+        
+        if (data.error) {
+          throw new Error(data.error);
+        }
         
         if (data.success) {
           setCallData({
