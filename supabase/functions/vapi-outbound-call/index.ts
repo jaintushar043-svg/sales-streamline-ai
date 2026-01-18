@@ -107,24 +107,43 @@ interface VapiOutboundRequest {
 }
 
 serve(async (req) => {
+  console.log("=== Vapi Outbound Call Function Started ===");
+  console.log("Method:", req.method);
+  console.log("URL:", req.url);
+
   // Handle CORS preflight
   if (req.method === "OPTIONS") {
+    console.log("Handling CORS preflight");
     return new Response(null, { headers: corsHeaders });
   }
 
   try {
     // Get auth token
     const authHeader = req.headers.get("Authorization");
+    console.log("Auth header present:", !!authHeader);
+    
     if (!authHeader) {
+      console.error("No authorization header provided");
       return new Response(
-        JSON.stringify({ error: "Unauthorized - no auth header" }),
+        JSON.stringify({ error: "Unauthorized - no auth header", success: false }),
         { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
     // Initialize Supabase client
-    const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY")!;
+    const supabaseUrl = Deno.env.get("SUPABASE_URL");
+    const supabaseAnonKey = Deno.env.get("SUPABASE_ANON_KEY");
+    
+    if (!supabaseUrl || !supabaseAnonKey) {
+      console.error("Missing Supabase environment variables");
+      return new Response(
+        JSON.stringify({ error: "Server configuration error", success: false }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+    
+    console.log("Supabase URL:", supabaseUrl);
+    
     const supabase = createClient(supabaseUrl, supabaseAnonKey, {
       global: { headers: { Authorization: authHeader } },
     });
@@ -132,22 +151,39 @@ serve(async (req) => {
     // Get authenticated user
     const { data: { user }, error: userError } = await supabase.auth.getUser();
     if (userError || !user) {
-      console.error("Auth error:", userError);
+      console.error("Auth error:", userError?.message || "No user found");
       return new Response(
-        JSON.stringify({ error: "Unauthorized" }),
+        JSON.stringify({ error: "Unauthorized - invalid token", success: false }),
         { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
+    
+    console.log("Authenticated user:", user.id);
 
     // Parse request body
-    const { leadId, phoneNumber, scriptType }: VapiOutboundRequest = await req.json();
-
-    if (!leadId || !phoneNumber || !scriptType) {
+    let requestBody: VapiOutboundRequest;
+    try {
+      requestBody = await req.json();
+      console.log("Request body:", JSON.stringify(requestBody));
+    } catch (parseError) {
+      console.error("Failed to parse request body:", parseError);
       return new Response(
-        JSON.stringify({ error: "Missing required fields: leadId, phoneNumber, scriptType" }),
+        JSON.stringify({ error: "Invalid JSON in request body", success: false }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
+    
+    const { leadId, phoneNumber, scriptType } = requestBody;
+
+    if (!leadId || !phoneNumber || !scriptType) {
+      console.error("Missing required fields:", { leadId: !!leadId, phoneNumber: !!phoneNumber, scriptType: !!scriptType });
+      return new Response(
+        JSON.stringify({ error: "Missing required fields: leadId, phoneNumber, scriptType", success: false }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    console.log("Fetching lead:", leadId);
 
     // Fetch lead data for personalization
     const { data: lead, error: leadError } = await supabase
@@ -157,22 +193,26 @@ serve(async (req) => {
       .single();
 
     if (leadError) {
-      console.error("Lead fetch error:", leadError);
+      console.error("Lead fetch error:", leadError.message, leadError.code);
       return new Response(
-        JSON.stringify({ error: "Lead not found" }),
+        JSON.stringify({ error: "Lead not found", details: leadError.message, success: false }),
         { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
+    console.log("Lead found:", lead.full_name, "at", lead.company_name);
+
     // Get Vapi API key
     const vapiApiKey = Deno.env.get("VAPI_API_KEY");
     if (!vapiApiKey) {
-      console.error("VAPI_API_KEY not configured");
+      console.error("VAPI_API_KEY not configured in environment");
       return new Response(
-        JSON.stringify({ error: "Vapi API key not configured" }),
+        JSON.stringify({ error: "Vapi API key not configured. Please add VAPI_API_KEY to your project secrets.", success: false }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
+    
+    console.log("VAPI_API_KEY is configured");
 
     // Build personalized system prompt
     const basePrompt = SYSTEM_PROMPTS[scriptType] || SYSTEM_PROMPTS.cold_outreach;
@@ -254,11 +294,13 @@ Use this information to personalize the conversation. Reference their company or
     const vapiData = await vapiResponse.json();
 
     if (!vapiResponse.ok) {
-      console.error("Vapi API error:", vapiData);
+      console.error("Vapi API error - Status:", vapiResponse.status);
+      console.error("Vapi API error - Response:", JSON.stringify(vapiData));
       return new Response(
         JSON.stringify({ 
           error: "Failed to initiate Vapi call", 
-          details: vapiData.message || vapiData 
+          details: vapiData.message || vapiData.error || JSON.stringify(vapiData),
+          success: false
         }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
@@ -315,9 +357,11 @@ Use this information to personalize the conversation. Reference their company or
 
   } catch (error) {
     console.error("Vapi outbound call error:", error);
+    console.error("Error stack:", error instanceof Error ? error.stack : "N/A");
     return new Response(
       JSON.stringify({ 
-        error: error instanceof Error ? error.message : "Unknown error occurred" 
+        error: error instanceof Error ? error.message : "Unknown error occurred",
+        success: false
       }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
