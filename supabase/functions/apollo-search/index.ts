@@ -136,17 +136,33 @@ serve(async (req) => {
     if (!apolloResponse.ok) {
       const errorText = await apolloResponse.text();
       console.error("Apollo API error:", errorText);
-      
-      // Fallback to AI-generated data if Apollo fails
-      return await generateFallbackLeads(req, user.id, { country, city, industry, companySize, jobTitles, revenueTier, limit });
+
+      // Client-ready behavior: do NOT generate demo/fake leads.
+      return new Response(
+        JSON.stringify({
+          success: false,
+          error: "Apollo search failed",
+          details: errorText,
+        }),
+        { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
 
     const apolloData = await apolloResponse.json();
     console.log(`Apollo returned ${apolloData.people?.length || 0} results`);
 
     if (!apolloData.people || apolloData.people.length === 0) {
-      // Fallback to AI-generated data if no results
-      return await generateFallbackLeads(req, user.id, { country, city, industry, companySize, jobTitles, revenueTier, limit });
+      return new Response(
+        JSON.stringify({
+          success: true,
+          leads: [],
+          count: 0,
+          source: "apollo",
+          message: "No leads matched your filters.",
+          remaining: usageCheck.remaining,
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
 
     const supabase = createServiceClient();
