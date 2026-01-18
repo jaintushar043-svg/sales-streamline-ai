@@ -2,7 +2,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { useLeads } from "@/hooks/useLeads";
 import { Button } from "@/components/ui/button";
 import { useNavigate } from "react-router-dom";
-import { LogOut, User, Building2, Download, Users, TrendingUp, FileSpreadsheet, Phone } from "lucide-react";
+import { LogOut, User, Building2, Download, Users, TrendingUp, FileSpreadsheet, Settings } from "lucide-react";
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import LeadFilters from "@/components/dashboard/LeadFilters";
@@ -108,6 +108,9 @@ const Dashboard = () => {
               <User className="h-4 w-4" />
               {profile?.full_name || user?.email}
             </div>
+            <Button variant="ghost" size="icon" onClick={() => navigate("/settings")}>
+              <Settings className="w-4 h-4" />
+            </Button>
             <Button variant="ghost" size="sm" onClick={handleSignOut}>
               <LogOut className="w-4 h-4 mr-2" />
               Sign Out
