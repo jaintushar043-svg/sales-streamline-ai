@@ -122,7 +122,7 @@ const LeadSearch = ({ onLeadsFound }: LeadSearchProps) => {
         return;
       }
 
-      // Use Apollo for real data only (no demo/fallback)
+      // First try Apollo for real data, falls back to AI if Apollo fails
       const response = await supabase.functions.invoke("apollo-search", {
         body: {
           country: selectedCountry?.label || "",
@@ -140,11 +140,23 @@ const LeadSearch = ({ onLeadsFound }: LeadSearchProps) => {
       }
 
       const data = response.data;
-      if (data?.success) {
-        toast.success(`Found ${data.count} leads from Apollo.io`, {
-          description: data.count === 0 ? "Try broadening your filters." : "Real verified business contacts from Apollo.io",
-        });
-
+      if (data.success) {
+        const source = data.source === "apollo" ? "Apollo.io (Verified)" : "Demo Mode";
+        const isDemo = data.source !== "apollo";
+        
+        if (isDemo && data.warning) {
+          toast.warning("Demo Data Generated", {
+            description: data.warning,
+            duration: 8000,
+          });
+        } else {
+          toast.success(`Found ${data.count} leads from ${source}!`, {
+            description: data.source === "apollo" 
+              ? "Real verified business contacts from Apollo.io" 
+              : "Demo leads for testing - not real contacts",
+          });
+        }
+        
         onLeadsFound();
         setIsOpen(false);
         // Reset form
@@ -156,12 +168,17 @@ const LeadSearch = ({ onLeadsFound }: LeadSearchProps) => {
         setJobTitle("");
         setCustomJobTitle("");
       } else {
-        throw new Error(data?.error || "Search failed");
+        throw new Error(data.error || "Search failed");
       }
     } catch (error) {
       console.error("Lead search error:", error);
-      const msg = error instanceof Error ? error.message : "Failed to search leads";
-      toast.error(msg);
+      if (error instanceof Error && error.message.includes("429")) {
+        toast.error("Search limit exceeded. Please upgrade your plan.");
+      } else if (error instanceof Error && error.message.includes("402")) {
+        toast.error("Please add credits to continue searching.");
+      } else {
+        toast.error(error instanceof Error ? error.message : "Failed to search leads");
+      }
     } finally {
       setIsSearching(false);
     }
