@@ -15,10 +15,21 @@ interface ApolloSearchRequest {
 }
 
 serve(async (req) => {
+  const requestId = crypto.randomUUID();
   const corsHeaders = getCorsHeaders(req.headers.get("origin"));
+
+  console.log(`[${requestId}] Apollo search request - Method: ${req.method}`);
 
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
+  }
+
+  if (req.method !== "POST") {
+    console.error(`[${requestId}] Invalid method: ${req.method}`);
+    return new Response(
+      JSON.stringify({ error: "Method not allowed", success: false, requestId }),
+      { status: 405, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
   }
 
   try {
@@ -26,31 +37,55 @@ serve(async (req) => {
     const user = await getUserFromAuth(authHeader);
 
     if (!user) {
+      console.error(`[${requestId}] Unauthorized - no valid user`);
       return new Response(
-        JSON.stringify({ error: "Unauthorized" }),
+        JSON.stringify({ error: "Unauthorized", success: false, requestId }),
         { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
+    console.log(`[${requestId}] User authenticated: ${user.id}`);
+
     const apolloApiKey = Deno.env.get("APOLLO_API_KEY");
 
     if (!apolloApiKey) {
+      console.error(`[${requestId}] APOLLO_API_KEY not configured`);
       return new Response(
-        JSON.stringify({ error: "Apollo API key not configured" }),
+        JSON.stringify({ 
+          error: "Apollo API key not configured. Please add your Apollo API key in Settings → Integrations.", 
+          success: false,
+          requestId 
+        }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    const { country, city, industry, companySize, jobTitles, revenueTier, limit = 25 }: ApolloSearchRequest = await req.json();
+    let requestBody: ApolloSearchRequest;
+    try {
+      requestBody = await req.json();
+    } catch (parseError) {
+      console.error(`[${requestId}] Failed to parse request body:`, parseError);
+      return new Response(
+        JSON.stringify({ error: "Invalid JSON in request body", success: false, requestId }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    const { country, city, industry, companySize, jobTitles, revenueTier, limit = 25 } = requestBody;
+
+    console.log(`[${requestId}] Search params:`, { country, city, industry, companySize, jobTitles: jobTitles?.length, limit });
 
     // Check usage limits
     const usageCheck = await checkUsageLimit(user.id, "lead_search", limit);
     if (!usageCheck.allowed) {
+      console.warn(`[${requestId}] Usage limit exceeded for user ${user.id}`);
       return new Response(
         JSON.stringify({ 
-          error: "Lead search limit exceeded",
+          error: "Lead search limit exceeded. Please upgrade your plan.",
           remaining: usageCheck.remaining,
-          limit: usageCheck.limit
+          limit: usageCheck.limit,
+          success: false,
+          requestId
         }),
         { status: 429, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
@@ -120,7 +155,7 @@ serve(async (req) => {
       }
     }
 
-    console.log("Apollo search params:", JSON.stringify(apolloParams, null, 2));
+    console.log(`[${requestId}] Apollo API request params:`, JSON.stringify(apolloParams, null, 2));
 
     // Make Apollo API request with proper authentication
     const apolloResponse = await fetch("https://api.apollo.io/v1/mixed_people/search", {
@@ -135,18 +170,34 @@ serve(async (req) => {
 
     if (!apolloResponse.ok) {
       const errorText = await apolloResponse.text();
-      console.error("Apollo API error:", errorText);
+      console.error(`[${requestId}] Apollo API error - Status ${apolloResponse.status}:`, errorText);
       
-      // Fallback to AI-generated data if Apollo fails
-      return await generateFallbackLeads(req, user.id, { country, city, industry, companySize, jobTitles, revenueTier, limit });
+      return new Response(
+        JSON.stringify({ 
+          error: `Apollo API error: ${apolloResponse.status}. Please check your API key is valid and has credits.`,
+          details: errorText,
+          success: false,
+          requestId
+        }),
+        { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
 
     const apolloData = await apolloResponse.json();
-    console.log(`Apollo returned ${apolloData.people?.length || 0} results`);
+    console.log(`[${requestId}] Apollo returned ${apolloData.people?.length || 0} results`);
 
     if (!apolloData.people || apolloData.people.length === 0) {
-      // Fallback to AI-generated data if no results
-      return await generateFallbackLeads(req, user.id, { country, city, industry, companySize, jobTitles, revenueTier, limit });
+      return new Response(
+        JSON.stringify({ 
+          success: true,
+          leads: [],
+          count: 0,
+          source: "apollo",
+          message: "No leads found matching your criteria. Try broadening your search filters.",
+          requestId
+        }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
 
     const supabase = createServiceClient();
@@ -204,8 +255,16 @@ serve(async (req) => {
       .select();
 
     if (insertError) {
-      console.error("Error inserting leads:", insertError);
-      throw insertError;
+      console.error(`[${requestId}] Error inserting leads:`, insertError);
+      return new Response(
+        JSON.stringify({ 
+          error: "Failed to save leads to database",
+          details: insertError.message,
+          success: false,
+          requestId
+        }),
+        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
 
     // Log usage
@@ -216,6 +275,8 @@ serve(async (req) => {
       industry,
     });
 
+    console.log(`[${requestId}] Successfully inserted ${insertedLeads?.length || 0} leads`);
+
     return new Response(
       JSON.stringify({
         success: true,
@@ -223,14 +284,20 @@ serve(async (req) => {
         count: insertedLeads?.length || 0,
         source: "apollo",
         remaining: usageCheck.remaining - (insertedLeads?.length || 0),
+        requestId
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (error: unknown) {
-    console.error("Apollo search error:", error);
+    console.error(`[${requestId}] Apollo search error:`, error);
+    console.error(`[${requestId}] Error stack:`, error instanceof Error ? error.stack : "N/A");
     const corsHeaders = getCorsHeaders(req.headers.get("origin"));
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
+      JSON.stringify({ 
+        error: error instanceof Error ? error.message : "Unknown error occurred",
+        success: false,
+        requestId
+      }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
@@ -253,105 +320,4 @@ function categorizeRevenue(revenue: number): string {
   if (revenue < 100000000) return "$50M-100M";
   if (revenue < 500000000) return "$100M-500M";
   return "$500M+";
-}
-
-async function generateFallbackLeads(
-  req: Request,
-  userId: string,
-  params: ApolloSearchRequest
-): Promise<Response> {
-  const corsHeaders = getCorsHeaders(req.headers.get("origin"));
-  console.log("Using AI fallback for lead generation - DATA WILL BE SIMULATED");
-  
-  const lovableApiKey = Deno.env.get("LOVABLE_API_KEY");
-  const supabase = createServiceClient();
-
-  const prompt = `Generate ${params.limit || 10} DEMO/SAMPLE B2B sales leads with the following criteria:
-- Location: ${params.city ? `${params.city}, ` : ""}${params.country || "United States"}
-- Industry: ${params.industry || "Technology"}
-- Company Size: ${params.companySize || "50-200 employees"}
-- Target Job Titles: ${params.jobTitles?.join(", ") || "Decision makers"}
-- Revenue Tier: ${params.revenueTier || "$10M-50M"}
-
-IMPORTANT: These are DEMO leads for testing purposes only. Generate realistic-looking but clearly fictional data.
-
-Return a JSON array with these exact fields for each lead:
-- full_name: Realistic full name appropriate for the region
-- email: Professional email (use demo domains like example.com, test-company.com, demo-corp.com)
-- phone: Valid phone number format for the country (use realistic format)
-- job_title: One of the target titles
-- company_name: Fictional but realistic company name (include "Demo", "Sample", or "Test" in some names)
-- company_website: Website URL (use example.com, demo domains)
-- company_linkedin_url: LinkedIn company page URL format (linkedin.com/company/...)
-- linkedin_url: LinkedIn profile URL format
-- company_size: Employee range
-- industry: The industry
-- company_revenue: Revenue tier
-
-Return ONLY the JSON array, no markdown or explanation.`;
-
-  const aiResponse = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${lovableApiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: "google/gemini-2.5-flash",
-      messages: [
-        { role: "system", content: "You are a DEMO data generator for testing. Generate realistic-looking but clearly fictional B2B lead data for testing purposes." },
-        { role: "user", content: prompt },
-      ],
-      temperature: 0.8,
-    }),
-  });
-
-  if (!aiResponse.ok) {
-    throw new Error("Failed to generate leads with AI");
-  }
-
-  const aiData = await aiResponse.json();
-  let leadsContent = aiData.choices[0]?.message?.content || "[]";
-
-  // Clean up response
-  leadsContent = leadsContent.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
-  
-  let parsedLeads;
-  try {
-    parsedLeads = JSON.parse(leadsContent);
-  } catch {
-    console.error("Failed to parse AI response:", leadsContent);
-    parsedLeads = [];
-  }
-
-  const leads = parsedLeads.map((lead: Record<string, unknown>) => ({
-    ...lead,
-    user_id: userId,
-    source: "demo_simulated", // Clearly mark as simulated
-    status: "new",
-  }));
-
-  const { data: insertedLeads, error: insertError } = await supabase
-    .from("leads")
-    .insert(leads)
-    .select();
-
-  if (insertError) throw insertError;
-
-  await logUsage(userId, "lead_search", insertedLeads?.length || 0, {
-    source: "ai_fallback",
-    country: params.country,
-    industry: params.industry,
-  });
-
-  return new Response(
-    JSON.stringify({
-      success: true,
-      leads: insertedLeads,
-      count: insertedLeads?.length || 0,
-      source: "demo_simulated",
-      warning: "⚠️ These are DEMO leads generated by AI for testing. For real verified data, ensure your Apollo.io API key is configured correctly.",
-    }),
-    { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-  );
 }

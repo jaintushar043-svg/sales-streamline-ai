@@ -47,3 +47,9 @@ verify_jwt = false
 
 [functions.vapi-webhook]
 verify_jwt = false
+
+[functions.check-integrations]
+verify_jwt = false
+
+[functions.test-integration]
+verify_jwt = false
