@@ -1,11 +1,9 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-
-// Production-safe CORS - restrict origins in production
+import { encode as encodeHex } from "https://deno.land/std@0.168.0/encoding/hex.ts";
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-vapi-signature",
 };
 
 interface VapiWebhookPayload {
@@ -48,51 +46,45 @@ interface VapiWebhookPayload {
   };
 }
 
-/**
- * Verify webhook authenticity by validating call ID against VAPI API
- * This is the production-approved method when no webhook secret is available
- */
-async function verifyCallWithVapiApi(callId: string, vapiApiKey: string, requestId: string): Promise<boolean> {
-  try {
-    console.log(`[${requestId}] Verifying call ${callId} with VAPI API`);
-    
-    const response = await fetch(`https://api.vapi.ai/call/${callId}`, {
-      method: "GET",
-      headers: {
-        "Authorization": `Bearer ${vapiApiKey}`,
-        "Content-Type": "application/json",
-      },
-    });
-
-    if (response.status === 200) {
-      console.log(`[${requestId}] Call ${callId} verified successfully with VAPI API`);
-      return true;
-    }
-
-    console.error(`[${requestId}] VAPI API verification failed - Status: ${response.status}`);
+// Verify Vapi webhook signature using HMAC-SHA256
+async function verifyVapiSignature(payload: string, signature: string | null, secret: string): Promise<boolean> {
+  if (!signature) {
+    console.warn("No signature provided in request");
     return false;
+  }
+
+  try {
+    const encoder = new TextEncoder();
+    const keyData = encoder.encode(secret);
+    const key = await crypto.subtle.importKey(
+      "raw",
+      keyData,
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"]
+    );
+    
+    const data = encoder.encode(payload);
+    const signatureBuffer = await crypto.subtle.sign("HMAC", key, data);
+    const expectedSignature = new TextDecoder().decode(encodeHex(new Uint8Array(signatureBuffer)));
+    
+    // Simple comparison (constant time not strictly needed for HMAC but good practice)
+    return signature === expectedSignature;
   } catch (error) {
-    console.error(`[${requestId}] VAPI API verification error:`, error instanceof Error ? error.message : "Unknown error");
+    console.error("Signature verification error:", error);
     return false;
   }
 }
 
-/**
- * Basic timestamp sanity check for replay attack prevention
- * Rejects webhooks with timestamps older than 5 minutes
- */
-function isReplayAttack(timestamp: number | undefined, requestId: string): boolean {
-  if (!timestamp) return false; // Skip check if no timestamp provided
+// Check for replay attacks using timestamp
+function isReplayAttack(timestamp: number | undefined): boolean {
+  if (!timestamp) return false; // Skip check if no timestamp
   
   const now = Date.now();
+  const requestTime = timestamp;
   const fiveMinutes = 5 * 60 * 1000;
   
-  if (Math.abs(now - timestamp) > fiveMinutes) {
-    console.warn(`[${requestId}] Potential replay attack - timestamp difference: ${Math.abs(now - timestamp)}ms`);
-    return true;
-  }
-  
-  return false;
+  return Math.abs(now - requestTime) > fiveMinutes;
 }
 
 serve(async (req) => {
@@ -104,9 +96,9 @@ serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
-  // Only accept POST requests - reject all other methods
+  // Only accept POST requests
   if (req.method !== "POST") {
-    console.error(`[${requestId}] Rejected - Invalid method: ${req.method}`);
+    console.error(`[${requestId}] Invalid method: ${req.method}`);
     return new Response(
       JSON.stringify({ error: "Method not allowed", requestId }),
       { status: 405, headers: { ...corsHeaders, "Content-Type": "application/json" } }
@@ -114,26 +106,46 @@ serve(async (req) => {
   }
 
   try {
-    // Read raw body for parsing
+    // Read raw body for signature verification
     const rawBody = await req.text();
     
-    // Reject empty payloads
-    if (!rawBody || rawBody.trim() === "") {
-      console.error(`[${requestId}] Rejected - Empty payload`);
-      return new Response(
-        JSON.stringify({ error: "Empty payload", requestId }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+    // Verify webhook signature if secret is configured
+    const vapiWebhookSecret = Deno.env.get("VAPI_WEBHOOK_SECRET");
+    
+    if (vapiWebhookSecret) {
+      const signature = req.headers.get("x-vapi-signature");
+      
+      if (!verifyVapiSignature(rawBody, signature, vapiWebhookSecret)) {
+        console.error(`[${requestId}] Invalid webhook signature - rejecting request`);
+        return new Response(
+          JSON.stringify({ error: "Invalid signature", requestId }),
+          { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      console.log(`[${requestId}] Webhook signature verified successfully`);
+    } else {
+      console.warn(`[${requestId}] VAPI_WEBHOOK_SECRET not configured - signature verification skipped`);
     }
 
-    // Parse payload safely
+    // Parse payload
     let payload: VapiWebhookPayload;
     try {
       payload = JSON.parse(rawBody);
     } catch (parseError) {
-      console.error(`[${requestId}] Rejected - Invalid JSON payload`);
+      console.error(`[${requestId}] Failed to parse webhook payload:`, parseError);
       return new Response(
         JSON.stringify({ error: "Invalid JSON payload", requestId }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    console.log(`[${requestId}] Webhook payload type:`, payload.message?.type);
+
+    // Check for replay attacks
+    if (isReplayAttack(payload.message?.timestamp)) {
+      console.error(`[${requestId}] Potential replay attack detected - timestamp too old`);
+      return new Response(
+        JSON.stringify({ error: "Request timestamp expired", requestId }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
@@ -141,48 +153,12 @@ serve(async (req) => {
     const message = payload.message;
     const messageType = message?.type;
     const callData = message?.call;
-    const vapiCallId = callData?.id;
 
-    console.log(`[${requestId}] Webhook type: ${messageType}, callId: ${vapiCallId || 'none'}`);
-
-    // CRITICAL: Require call ID for authenticity verification
-    if (!vapiCallId) {
-      console.error(`[${requestId}] Rejected - No call ID in payload`);
-      return new Response(
-        JSON.stringify({ error: "Missing call ID - cannot verify authenticity", requestId }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    // Check for replay attacks using timestamp
-    if (isReplayAttack(message?.timestamp, requestId)) {
-      console.error(`[${requestId}] Rejected - Replay attack detected`);
-      return new Response(
-        JSON.stringify({ error: "Request timestamp expired", requestId }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    // Get VAPI API key for server-side verification
-    const vapiApiKey = Deno.env.get("VAPI_API_KEY");
-    
-    if (!vapiApiKey) {
-      console.error(`[${requestId}] Server config error - VAPI_API_KEY not configured`);
-      return new Response(
-        JSON.stringify({ error: "Server configuration error", requestId }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    // VERIFY WEBHOOK AUTHENTICITY: Validate call ID against VAPI API
-    const isValidCall = await verifyCallWithVapiApi(vapiCallId, vapiApiKey, requestId);
-    
-    if (!isValidCall) {
-      console.error(`[${requestId}] Rejected - Call verification failed for ${vapiCallId}`);
-      return new Response(
-        JSON.stringify({ error: "Webhook authenticity verification failed", requestId }),
-        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+    if (!messageType) {
+      console.log(`[${requestId}] No message type in webhook`);
+      return new Response(JSON.stringify({ received: true, requestId }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
     }
 
     // Initialize Supabase admin client
@@ -199,6 +175,15 @@ serve(async (req) => {
     
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
+    const vapiCallId = callData?.id;
+
+    if (!vapiCallId) {
+      console.log(`[${requestId}] No call ID in webhook payload`);
+      return new Response(JSON.stringify({ received: true, requestId }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     // Find the call record by vapi_call_id (idempotent lookup)
     const { data: existingCall, error: findError } = await supabase
       .from("calls")
@@ -210,7 +195,7 @@ serve(async (req) => {
       console.error(`[${requestId}] Error finding call:`, findError);
     }
 
-    console.log(`[${requestId}] Processing ${messageType} for verified call ${vapiCallId}, existing record: ${existingCall?.id || 'none'}`);
+    console.log(`[${requestId}] Processing ${messageType} for call ${vapiCallId}, existing record: ${existingCall?.id || 'none'}`);
 
     switch (messageType) {
       case "call-started":
@@ -378,7 +363,7 @@ serve(async (req) => {
       }
 
       case "function-call": {
-        console.log(`[${requestId}] Function call received`);
+        console.log(`[${requestId}] Function call received:`, message);
         break;
       }
 
@@ -387,14 +372,15 @@ serve(async (req) => {
     }
 
     return new Response(
-      JSON.stringify({ received: true, type: messageType, verified: true, requestId }),
+      JSON.stringify({ received: true, type: messageType, requestId }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
 
   } catch (error) {
-    console.error(`[${requestId}] Vapi webhook error:`, error instanceof Error ? error.message : "Unknown error");
+    console.error(`[${requestId}] Vapi webhook error:`, error);
+    console.error(`[${requestId}] Error stack:`, error instanceof Error ? error.stack : "N/A");
     return new Response(
-      JSON.stringify({ error: "Internal server error", requestId }),
+      JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error", requestId }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
