@@ -86,13 +86,15 @@ const AICallPanel = ({ lead }: AICallPanelProps) => {
 
   // Timer for call duration
   useEffect(() => {
-    let interval: NodeJS.Timeout;
+    let interval: ReturnType<typeof setInterval> | undefined;
     if (callState === "in_progress") {
       interval = setInterval(() => {
         setCallDuration((prev) => prev + 1);
       }, 1000);
     }
-    return () => clearInterval(interval);
+    return () => {
+      if (interval) clearInterval(interval);
+    };
   }, [callState]);
 
   // Subscribe to real-time call updates
@@ -167,7 +169,7 @@ const AICallPanel = ({ lead }: AICallPanelProps) => {
       { delay: 22000, speaker: "AI", text: "Excellent! I have availability tomorrow at 2 PM or Thursday at 10 AM. Which works better for you?" },
     ];
 
-    const timeouts: NodeJS.Timeout[] = [];
+    const timeouts: ReturnType<typeof setTimeout>[] = [];
     demoMessages.forEach(({ delay, speaker, text }) => {
       const timeout = setTimeout(() => {
         setDemoTranscript((prev) => [...prev, `[${speaker}]: ${text}`]);

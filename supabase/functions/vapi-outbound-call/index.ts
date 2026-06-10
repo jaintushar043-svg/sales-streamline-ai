@@ -3,7 +3,9 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-api-version",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Max-Age": "86400",
 };
 
 // AI Sales Agent System Prompts by Script Type
@@ -114,7 +116,15 @@ serve(async (req) => {
   // Handle CORS preflight
   if (req.method === "OPTIONS") {
     console.log("Handling CORS preflight");
-    return new Response(null, { headers: corsHeaders });
+    return new Response(null, { status: 204, headers: corsHeaders });
+  }
+
+  // Enforce POST only for actual invocations
+  if (req.method !== "POST") {
+    return new Response(
+      JSON.stringify({ error: "Method not allowed", success: false }),
+      { status: 405, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
   }
 
   try {
@@ -236,73 +246,68 @@ Use this information to personalize the conversation. Reference their company or
     // Vapi webhook URL for call events
     const webhookUrl = `${supabaseUrl}/functions/v1/vapi-webhook`;
 
-    // Create the outbound call via Vapi API
-    console.log("Initiating Vapi outbound call to:", phoneNumber);
-    
-    const vapiResponse = await fetch("https://api.vapi.ai/call/phone", {
-      method: "POST",
-      headers: {
-        "Authorization": `Bearer ${vapiApiKey}`,
-        "Content-Type": "application/json",
+    // Build assistant config. Default voice = OpenAI TTS (works without extra Vapi integrations).
+    // If a 11labs voice id is provided via env, we try it first and fall back to OpenAI.
+    const elevenVoiceId = Deno.env.get("VAPI_ELEVENLABS_VOICE_ID");
+    const buildAssistant = (voice: Record<string, unknown>) => ({
+      name: "Alex - TechMarqX SDR",
+      model: {
+        provider: "openai",
+        model: "gpt-4o-mini",
+        messages: [{ role: "system", content: systemPrompt }],
+        temperature: 0.7,
       },
-      body: JSON.stringify({
-        customer: {
-          number: phoneNumber,
-        },
-        assistant: {
-          name: "Alex - TechMarqX SDR",
-          model: {
-            provider: "openai",
-            model: "gpt-4o-mini",
-            messages: [
-              {
-                role: "system",
-                content: systemPrompt,
-              },
-            ],
-            temperature: 0.7,
-          },
-          voice: {
-            provider: "11labs",
-            voiceId: "21m00Tcm4TlvDq8ikWAM", // Rachel - professional female voice
-            stability: 0.5,
-            similarityBoost: 0.75,
-          },
-          firstMessage: firstMessage,
-          transcriber: {
-            provider: "deepgram",
-            model: "nova-2",
-            language: "en",
-          },
-          serverUrl: webhookUrl,
-          endCallFunctionEnabled: true,
-          endCallMessage: "Thank you so much for your time today. Have a great day!",
-          silenceTimeoutSeconds: 30,
-          maxDurationSeconds: 300, // 5 minutes max
-          backgroundSound: "office",
-          backchannelingEnabled: true,
-          backgroundDenoisingEnabled: true,
-        },
-        metadata: {
-          userId: user.id,
-          leadId: leadId,
-          scriptType: scriptType,
-        },
-      }),
+      voice,
+      firstMessage,
+      transcriber: { provider: "deepgram", model: "nova-2", language: "en" },
+      serverUrl: webhookUrl,
+      endCallFunctionEnabled: true,
+      endCallMessage: "Thank you so much for your time today. Have a great day!",
+      silenceTimeoutSeconds: 30,
+      maxDurationSeconds: 300,
+      backchannelingEnabled: true,
+      backgroundDenoisingEnabled: true,
     });
 
-    const vapiData = await vapiResponse.json();
+    const openaiVoice = { provider: "openai", voiceId: "shimmer" };
+    const elevenVoice = elevenVoiceId
+      ? { provider: "11labs", voiceId: elevenVoiceId, stability: 0.5, similarityBoost: 0.75 }
+      : null;
 
-    if (!vapiResponse.ok) {
-      console.error("Vapi API error - Status:", vapiResponse.status);
-      console.error("Vapi API error - Response:", JSON.stringify(vapiData));
-      return new Response(
-        JSON.stringify({ 
-          error: "Failed to initiate Vapi call", 
-          details: vapiData.message || vapiData.error || JSON.stringify(vapiData),
-          success: false
+    const callVapi = async (assistant: Record<string, unknown>) => {
+      const res = await fetch("https://api.vapi.ai/call/phone", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${vapiApiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify({
+          customer: { number: phoneNumber },
+          assistant,
+          metadata: { userId: user.id, leadId, scriptType },
         }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      });
+      const json = await res.json().catch(() => ({}));
+      return { ok: res.ok, status: res.status, data: json };
+    };
+
+    console.log("Initiating Vapi outbound call to:", phoneNumber);
+    let vapiResult = await callVapi(buildAssistant(elevenVoice || openaiVoice));
+
+    // Fallback: if the call failed AND we tried ElevenLabs, retry with OpenAI TTS.
+    if (!vapiResult.ok && elevenVoice) {
+      console.warn("ElevenLabs voice failed, retrying with OpenAI TTS. Error:", JSON.stringify(vapiResult.data));
+      vapiResult = await callVapi(buildAssistant(openaiVoice));
+    }
+
+    const vapiData = vapiResult.data as Record<string, unknown>;
+    if (!vapiResult.ok) {
+      console.error("Vapi API error - Status:", vapiResult.status, "Response:", JSON.stringify(vapiData));
+      return new Response(
+        JSON.stringify({
+          error: "Failed to initiate Vapi call",
+          details: (vapiData as { message?: string; error?: string }).message ||
+            (vapiData as { message?: string; error?: string }).error || JSON.stringify(vapiData),
+          success: false,
+        }),
+        { status: 502, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
