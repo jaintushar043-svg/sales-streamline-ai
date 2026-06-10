@@ -3,7 +3,9 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-supabase-api-version",
+  "Access-Control-Allow-Methods": "POST, OPTIONS",
+  "Access-Control-Max-Age": "86400",
 };
 
 // AI Sales Agent System Prompts by Script Type
@@ -114,7 +116,15 @@ serve(async (req) => {
   // Handle CORS preflight
   if (req.method === "OPTIONS") {
     console.log("Handling CORS preflight");
-    return new Response(null, { headers: corsHeaders });
+    return new Response(null, { status: 204, headers: corsHeaders });
+  }
+
+  // Enforce POST only for actual invocations
+  if (req.method !== "POST") {
+    return new Response(
+      JSON.stringify({ error: "Method not allowed", success: false }),
+      { status: 405, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+    );
   }
 
   try {
